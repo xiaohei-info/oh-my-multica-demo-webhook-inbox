@@ -13,7 +13,7 @@ nodes:
   worker: codex-ubuntu-newapi
   blocked_by: []
   work_item_id: e0dd3f11-8ae9-4fe3-980a-e804c9d61c28
-  status: in_progress
+  status: blocked
   title: Establish shared domain, configuration, and test foundation
   description: Establish the stable framework-free contracts required by the API and
     persistence tracks.
