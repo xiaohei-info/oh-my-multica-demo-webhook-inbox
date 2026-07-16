@@ -135,11 +135,11 @@ nodes:
     - tests/test_repository.py
     - tests/test_service.py
 - id: http-api-and-errors
-  worker: codex-macmini-newapi
+  worker: claude-ubuntu-newapi
   blocked_by:
   - shared-domain-foundation
   work_item_id: 7911ebfe-390f-44af-a97b-f1e6bf165598
-  status: blocked
+  status: in_progress
   title: Implement FastAPI boundary, bounded reads, and stable errors
   description: Implement the HTTP adapter against the service contract, using fakes
     only to isolate API unit tests.
