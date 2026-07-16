@@ -139,7 +139,7 @@ nodes:
   blocked_by:
   - shared-domain-foundation
   work_item_id: 7911ebfe-390f-44af-a97b-f1e6bf165598
-  status: in_review
+  status: done
   title: Implement FastAPI boundary, bounded reads, and stable errors
   description: Implement the HTTP adapter against the service contract, using fakes
     only to isolate API unit tests.
@@ -201,6 +201,8 @@ nodes:
     scope_paths:
     - src/api.py
     - tests/test_api.py
+  merged: true
+  merged_at: '2026-07-16T16:27:36Z'
 - id: delivery-assets
   worker: claude-ubuntu-newapi
   blocked_by:
