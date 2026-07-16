@@ -202,11 +202,11 @@ class TestReceiveEvent:
         assert first.event.received_at == second.event.received_at
 
     def test_generates_server_side_received_at(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: str
     ) -> None:
         fake_now = datetime(2026, 7, 16, 12, 0, 0, tzinfo=timezone.utc)
         monkeypatch.setattr(service_module, "now_utc", lambda: fake_now)
-        db_path = "/tmp/test_received_at.db"
+        db_path = f"{tmp_path}/received_at.db"
         svc = Service(
             webhook_secret="super-secret",
             repository=new_repository(db_path),

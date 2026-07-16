@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 import pytest
 
 from src.domain import Event, StatusCode
-from src.errors import ConflictError
 from src.repository import Repository, new_repository
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture
@@ -78,15 +82,15 @@ class TestUpsertEvent:
 
     def test_conflict_on_same_id_different_body(self, repo: Repository) -> None:
         repo.upsert_event(_event("evt-1", "first"))
-        with pytest.raises(ConflictError) as exc:
-            repo.upsert_event(_event("evt-1", "second"))
-        assert exc.value.code == ConflictError().code
+        result = repo.upsert_event(_event("evt-1", "second"))
+        assert result.status is StatusCode.CONFLICT
+        assert result.event.body_raw == b"first"
+        assert result.event.duplicate_count == 0
 
     def test_conflict_preserves_existing_row(self, repo: Repository) -> None:
         original = _event("evt-1", "first")
         repo.upsert_event(original)
-        with pytest.raises(ConflictError):
-            repo.upsert_event(_event("evt-1", "second"))
+        repo.upsert_event(_event("evt-1", "second"))
         stored = repo.get_event("evt-1")
         assert stored is not None
         assert stored.body_raw == b"first"
@@ -94,8 +98,8 @@ class TestUpsertEvent:
 
     def test_duplicate_uses_exact_byte_comparison(self, repo: Repository) -> None:
         repo.upsert_event(_event("evt-1", '{"a":1}'))
-        with pytest.raises(ConflictError):
-            repo.upsert_event(_event("evt-1", '{ "a": 1 }'))
+        result = repo.upsert_event(_event("evt-1", '{ "a": 1 }'))
+        assert result.status is StatusCode.CONFLICT
 
     def test_stores_payload_json(self, repo: Repository) -> None:
         event = _event("evt-1", "first")
@@ -126,3 +130,42 @@ class TestGetEvent:
         stored = repo.get_event("evt-1")
         assert stored is not None
         assert stored.duplicate_count == 1
+
+
+class TestConcurrentUpsert:
+    def test_concurrent_same_id_writes_do_not_raise(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "concurrent.db"
+        workers = 24
+        barrier = threading.Barrier(workers)
+        errors: list[Exception] = []
+        lock = threading.Lock()
+        created_count = {"n": 0}
+        duplicated_count = {"n": 0}
+
+        def worker() -> None:
+            repo = new_repository(str(db_path))
+            barrier.wait()
+            try:
+                result = repo.upsert_event(_event("evt-concurrent", "payload"))
+                with lock:
+                    if result.status is StatusCode.CREATED:
+                        created_count["n"] += 1
+                    else:
+                        duplicated_count["n"] += 1
+            except Exception as exc:  # noqa: BLE001
+                with lock:
+                    errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(workers)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, errors
+        assert created_count["n"] == 1
+        assert duplicated_count["n"] == workers - 1
+        repo = new_repository(str(db_path))
+        stored = repo.get_event("evt-concurrent")
+        assert stored is not None
+        assert stored.duplicate_count == workers - 1

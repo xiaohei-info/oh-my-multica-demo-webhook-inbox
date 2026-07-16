@@ -5,8 +5,9 @@ import hmac
 import json
 from typing import TYPE_CHECKING, Any
 
-from src.domain import Event, EventResult, now_utc
+from src.domain import Event, EventResult, StatusCode, now_utc
 from src.errors import (
+    ConflictError,
     ErrorCode,
     InvalidJsonError,
     MissingEventIdError,
@@ -62,4 +63,10 @@ class Service:
             payload=payload,
             received_at=now_utc(),
         )
-        return self._repository.upsert_event(event)
+        try:
+            result = self._repository.upsert_event(event)
+        except ConflictError as exc:
+            raise ConflictError() from exc
+        if result.status is StatusCode.CONFLICT:
+            raise ConflictError()
+        return result

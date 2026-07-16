@@ -5,7 +5,6 @@ import sqlite3
 from datetime import datetime, timezone
 
 from src.domain import Event, EventResult, StatusCode
-from src.errors import ConflictError
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -28,6 +27,8 @@ def _parse_timestamp(raw: str) -> datetime:
 class Repository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._conn = connection
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -51,12 +52,28 @@ class Repository:
         )
 
     def upsert_event(self, event: Event) -> EventResult:
-        existing = self._conn.execute(
-            "SELECT body_raw, payload_json, received_at, duplicate_count FROM events WHERE event_id = ?",
-            (event.event_id,),
-        ).fetchone()
-        if existing is not None:
-            body_raw, payload_json, received_at, duplicate_count = existing
+        cursor = self._conn.cursor()
+        try:
+            cursor.execute(
+                "INSERT INTO events (event_id, body_raw, payload_json, received_at, duplicate_count) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    event.event_id,
+                    event.body_raw,
+                    json.dumps(event.payload),
+                    event.received_at,
+                    event.duplicate_count,
+                ),
+            )
+        except sqlite3.IntegrityError:
+            row = self._conn.execute(
+                "SELECT body_raw, payload_json, received_at, duplicate_count "
+                "FROM events WHERE event_id = ?",
+                (event.event_id,),
+            ).fetchone()
+            if row is None:
+                return EventResult(event=event, status=StatusCode.CREATED)
+            body_raw, payload_json, received_at, duplicate_count = row
             if body_raw == event.body_raw:
                 new_count = duplicate_count + 1
                 self._conn.execute(
@@ -74,21 +91,20 @@ class Repository:
                     ),
                     status=StatusCode.DUPLICATE,
                 )
-            raise ConflictError()
-
-        self._conn.execute(
-            "INSERT INTO events (event_id, body_raw, payload_json, received_at, duplicate_count) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (
-                event.event_id,
-                event.body_raw,
-                json.dumps(event.payload),
-                event.received_at,
-                event.duplicate_count,
-            ),
-        )
-        self._conn.commit()
-        return EventResult(event=event, status=StatusCode.CREATED)
+            self._conn.rollback()
+            return EventResult(
+                event=Event(
+                    event_id=event.event_id,
+                    body_raw=body_raw,
+                    payload=json.loads(payload_json),
+                    received_at=_parse_timestamp(received_at),
+                    duplicate_count=duplicate_count,
+                ),
+                status=StatusCode.CONFLICT,
+            )
+        else:
+            self._conn.commit()
+            return EventResult(event=event, status=StatusCode.CREATED)
 
 
 def new_repository(db_path: str) -> Repository:
