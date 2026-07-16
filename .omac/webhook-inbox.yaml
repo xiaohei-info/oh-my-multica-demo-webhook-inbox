@@ -72,7 +72,7 @@ nodes:
   blocked_by:
   - shared-domain-foundation
   work_item_id: ba212125-0adc-425c-a15d-58e6a9208ed1
-  status: blocked
+  status: in_review
   title: Implement service authentication, JSON validation, and SQLite deduplication
   description: Implement the framework-free service and repository behavior against
     the shared contracts.
@@ -139,7 +139,7 @@ nodes:
   blocked_by:
   - shared-domain-foundation
   work_item_id: 7911ebfe-390f-44af-a97b-f1e6bf165598
-  status: blocked
+  status: done
   title: Implement FastAPI boundary, bounded reads, and stable errors
   description: Implement the HTTP adapter against the service contract, using fakes
     only to isolate API unit tests.
