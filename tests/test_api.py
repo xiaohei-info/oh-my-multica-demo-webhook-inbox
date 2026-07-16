@@ -52,9 +52,9 @@ class ReceivingService:
         self._raise_invalid_signature = raise_invalid_signature
 
     def receive_event(
-        self, event_id: str, raw_body: bytes, signature_header: str | None
+        self, signature: str | None, event_id: str, raw_body: bytes
     ) -> EventResult:
-        if not signature_header:
+        if not signature:
             raise SignatureError(
                 ErrorCode.MISSING_SIGNATURE, "Missing X-Webhook-Signature header"
             )

@@ -5,7 +5,14 @@ import hmac
 import json
 from typing import TYPE_CHECKING, Any
 
-from src.domain import Event, EventResult, now_utc
+from src.domain import (
+    DatabaseStatus,
+    Event,
+    EventResult,
+    HealthResult,
+    HealthStatus,
+    now_utc,
+)
 from src.errors import (
     ErrorCode,
     InvalidJsonError,
@@ -63,3 +70,16 @@ class Service:
             received_at=now_utc(),
         )
         return self._repository.upsert_event(event)
+
+    def get_event(self, event_id: str) -> Event | None:
+        return self._repository.get_event(event_id)
+
+    def check_health(self) -> HealthResult:
+        ok = False
+        try:
+            ok = bool(self._repository.check_health())
+        except Exception:
+            ok = False
+        if ok:
+            return HealthResult(status=HealthStatus.OK, database=DatabaseStatus.OK)
+        return HealthResult(status=HealthStatus.DEGRADED, database=DatabaseStatus.ERROR)

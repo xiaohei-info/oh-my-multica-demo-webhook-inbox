@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pip tools
+        run: python -m pip install --upgrade pip uv
+
+      - name: Lint
+        run: |
+          ruff check src tests
+          ruff format --check src tests
+
+  test:
+    needs: quality
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Sync hashed dependencies
+        run: python -m pip install --require-hashes --no-deps --no-cache-dir -r requirements.txt
+
+      - name: Install project + dev extras
+        run: python -m pip install --no-deps -e ".[dev]"
+
+      - name: Typecheck
+        run: python -m mypy src
+
+      - name: Test
+        run: >-
+          python -m pytest --cov=src --cov-branch
+          --cov-report=term-missing --cov-fail-under=90 --cov-fail-under=90 -q
+
+  deliver:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: pip install with hashes
+        run: python -m pip install --require-hashes --no-deps --no-cache-dir -r requirements.txt
+
+      - name: Build Docker image
+        run: docker build -t webhook-inbox:ci .
+
+      - uses: docker/login-action@v3
+        if: github.event_name == 'push' && github.ref == 'refs/heads/HEAD'
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Delivery verifier
+        env:
+          WEBHOOK_SECRET: ci-secret-token
+        run: |
+          bash tests/verify_delivery.sh
