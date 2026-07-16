@@ -3,12 +3,12 @@ engine: multica
 workspace: 410ade5e-8ae0-4402-b975-813dea2ff3e1
 project: 8fc5187a-ded5-4be5-a324-92cca645d0a2
 roles:
-  planner: claude-ubuntu-newapi
+  planner: codex-ubuntu
   orchestrator: hermes-orchestrator
   workers:
   - codex-ubuntu-newapi
   - codex-macmini-newapi
-  - opencode-ubuntu
+  - claude-ubuntu-newapi
   reviewers:
   - hermes-reviewer
   - claude-macmini
