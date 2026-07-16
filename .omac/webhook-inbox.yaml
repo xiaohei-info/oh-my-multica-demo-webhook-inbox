@@ -76,7 +76,7 @@ nodes:
   title: Implement service authentication, JSON validation, and SQLite deduplication
   description: Implement the framework-free service and repository behavior against
     the shared contracts.
-  reviewer: claude-macmini
+  reviewer: hermes-reviewer
   contract:
     objective: Verify HMAC before JSON parsing, reject invalid JSON, and persist accepted
       events atomically with exact-byte transaction-safe deduplication.
@@ -213,7 +213,7 @@ nodes:
   title: Add and verify reproducible runtime, CI, and operator assets
   description: Package the completed HTTP and persistence tracks into a verifiable
     developer and container delivery surface.
-  reviewer: claude-macmini
+  reviewer: hermes-reviewer
   contract:
     objective: Deliver and execute a repository-owned delivery verifier for hashed
       dependencies, CI structure, Docker non-root health, and complete operator documentation.
