@@ -21,9 +21,10 @@ class AppError(Exception):
         self.message = message
 
 
-class StartupError(AppError):
+class StartupError(Exception):
     def __init__(self, message: str) -> None:
-        super().__init__(ErrorCode.DB_UNHEALTHY, message)
+        super().__init__(message)
+        self.message = message
 
 
 class SignatureError(AppError):

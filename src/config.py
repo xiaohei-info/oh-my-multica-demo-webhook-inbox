@@ -6,7 +6,7 @@ from pathlib import Path
 
 from src.errors import StartupError
 
-DEFAULT_DATABASE_PATH = Path("./data/webhook.db")
+DEFAULT_DATABASE_PATH = Path("./webhook_inbox.db")
 MAX_CONTENT_LENGTH = 1024 * 1024
 
 

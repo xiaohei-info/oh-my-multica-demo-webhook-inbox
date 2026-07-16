@@ -39,7 +39,7 @@ class TestEvent:
         assert event.body_raw == b'{"ok":true}'
         assert event.payload == {"ok": True}
         assert event.received_at == received
-        assert event.duplicate is False
+        assert event.duplicate_count == 0
 
     def test_empty_event_id_raises(self) -> None:
         with pytest.raises(ValueError):
@@ -54,6 +54,15 @@ class TestEvent:
                 received_at=now_utc(),
             )
 
+    def test_bytearray_body_rejected(self) -> None:
+        with pytest.raises(TypeError):
+            Event(
+                event_id="evt-1",
+                body_raw=bytearray(b"x"),  # type: ignore[arg-type]
+                payload=None,
+                received_at=now_utc(),
+            )
+
     def test_non_datetime_received_at_raises(self) -> None:
         with pytest.raises(TypeError):
             Event(
@@ -63,14 +72,62 @@ class TestEvent:
                 received_at="not-a-datetime",  # type: ignore[arg-type]
             )
 
-    def test_duplicate_flag_defaults_to_false(self) -> None:
+    def test_duplicate_count_defaults_to_zero(self) -> None:
         event = Event(
             event_id="evt-1",
             body_raw=b"{}",
             payload={},
             received_at=now_utc(),
         )
-        assert event.duplicate is False
+        assert event.duplicate_count == 0
+
+    def test_duplicate_count_accepts_positive_value(self) -> None:
+        event = Event(
+            event_id="evt-1",
+            body_raw=b"{}",
+            payload={},
+            received_at=now_utc(),
+            duplicate_count=3,
+        )
+        assert event.duplicate_count == 3
+
+    def test_bool_duplicate_count_raises(self) -> None:
+        with pytest.raises(ValueError):
+            Event(
+                event_id="evt-1",
+                body_raw=b"{}",
+                payload={},
+                received_at=now_utc(),
+                duplicate_count=True,  # type: ignore[arg-type]
+            )
+        with pytest.raises(ValueError):
+            Event(
+                event_id="evt-1",
+                body_raw=b"{}",
+                payload={},
+                received_at=now_utc(),
+                duplicate_count=False,  # type: ignore[arg-type]
+            )
+
+    def test_negative_duplicate_count_raises(self) -> None:
+        with pytest.raises(ValueError):
+            Event(
+                event_id="evt-1",
+                body_raw=b"{}",
+                payload={},
+                received_at=now_utc(),
+                duplicate_count=-1,
+            )
+
+    def test_non_int_duplicate_count_raises(self) -> None:
+        with pytest.raises(ValueError):
+            Event(
+                event_id="evt-1",
+                body_raw=b"{}",
+                payload={},
+                received_at=now_utc(),
+                duplicate_count="many",  # type: ignore[arg-type]
+            )
 
     def test_event_is_immutable(self) -> None:
         event = Event(
@@ -148,9 +205,12 @@ class TestErrorHierarchy:
         assert error.message == "boom"
         assert str(error) == "boom"
 
-    def test_startup_error_uses_db_unhealthy_code(self) -> None:
+    def test_startup_error_is_not_app_error(self) -> None:
         error = StartupError("bad config")
-        assert error.code is ErrorCode.DB_UNHEALTHY
+        assert isinstance(error, Exception)
+        assert not isinstance(error, AppError)
+        assert error.message == "bad config"
+        assert str(error) == "bad config"
 
     def test_signature_error_rejects_non_signature_codes(self) -> None:
         with pytest.raises(ValueError):

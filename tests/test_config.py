@@ -15,10 +15,11 @@ def _clean_env() -> None:
 
 
 class TestSettings:
-    def test_default_database_path(self) -> None:
+    def test_default_database_path_matches_design(self) -> None:
+        assert Path("./webhook_inbox.db") == DEFAULT_DATABASE_PATH
         settings = Settings(webhook_secret="ok", database_path=DEFAULT_DATABASE_PATH)
         assert settings.webhook_secret == "ok"
-        assert settings.database_path == DEFAULT_DATABASE_PATH
+        assert settings.database_path == Path("./webhook_inbox.db")
 
 
 class TestLoadSettings:
@@ -39,7 +40,7 @@ class TestLoadSettings:
         _clean_env()
         monkeypatch.setenv("WEBHOOK_SECRET", "ok-secret")
         settings = load_settings()
-        assert settings.database_path == DEFAULT_DATABASE_PATH
+        assert settings.database_path == Path("./webhook_inbox.db")
 
     def test_custom_database_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _clean_env()
@@ -70,7 +71,7 @@ class TestLoadSettings:
         monkeypatch.setenv("WEBHOOK_SECRET", "ok-secret")
         monkeypatch.setenv("DATABASE_PATH", "")
         settings = load_settings()
-        assert settings.database_path == DEFAULT_DATABASE_PATH
+        assert settings.database_path == Path("./webhook_inbox.db")
 
 
 class TestGetSettings:
