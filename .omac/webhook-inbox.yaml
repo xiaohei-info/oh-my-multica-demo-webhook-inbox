@@ -68,11 +68,11 @@ nodes:
   merged: true
   merged_at: '2026-07-16T14:25:51Z'
 - id: persistence-and-dedup
-  worker: claude-ubuntu-newapi
+  worker: codex-ubuntu-newapi
   blocked_by:
   - shared-domain-foundation
   work_item_id: ba212125-0adc-425c-a15d-58e6a9208ed1
-  status: blocked
+  status: in_progress
   title: Implement service authentication, JSON validation, and SQLite deduplication
   description: Implement the framework-free service and repository behavior against
     the shared contracts.
