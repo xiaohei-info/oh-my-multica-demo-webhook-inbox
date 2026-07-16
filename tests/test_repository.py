@@ -164,21 +164,24 @@ class TestConcurrentUpsert:
                     setup_errors.append(exc)
                 return
             try:
-                barrier.wait(timeout=timeout)
-            except threading.BrokenBarrierError as exc:
-                with lock:
-                    setup_errors.append(exc)
-                return
-            try:
-                result = repo.upsert_event(_event("evt-concurrent", "payload"))
-                with lock:
-                    if result.status is StatusCode.CREATED:
-                        created_count["n"] += 1
-                    else:
-                        duplicated_count["n"] += 1
-            except Exception as exc:  # noqa: BLE001
-                with lock:
-                    errors.append(exc)
+                try:
+                    barrier.wait(timeout=timeout)
+                except threading.BrokenBarrierError as exc:
+                    with lock:
+                        setup_errors.append(exc)
+                    return
+                try:
+                    result = repo.upsert_event(_event("evt-concurrent", "payload"))
+                    with lock:
+                        if result.status is StatusCode.CREATED:
+                            created_count["n"] += 1
+                        else:
+                            duplicated_count["n"] += 1
+                except Exception as exc:  # noqa: BLE001
+                    with lock:
+                        errors.append(exc)
+            finally:
+                repo.close()
 
         threads = [threading.Thread(target=worker) for _ in range(workers)]
         for t in threads:

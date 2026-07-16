@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from datetime import datetime, timezone
 
 from src.domain import Event, EventResult, StatusCode
+
+# Serializes the one-time WAL + schema initialization so concurrent connections
+# opening the same fresh database do not race to convert it to WAL mode (which would
+# convoy on the journal-mode-change lock and exceed the busy budget). This lock
+# governs setup only; all dedup authority remains in SQLite transactions.
+_init_lock = threading.Lock()
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -27,9 +34,13 @@ def _parse_timestamp(raw: str) -> datetime:
 class Repository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._conn = connection
-        self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
-        self._init_schema()
+        with _init_lock:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._init_schema()
+
+    def close(self) -> None:
+        self._conn.close()
 
     def _init_schema(self) -> None:
         self._conn.execute(_SCHEMA)
@@ -110,5 +121,5 @@ class Repository:
 
 
 def new_repository(db_path: str) -> Repository:
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=5.0)
     return Repository(conn)
