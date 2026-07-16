@@ -14,7 +14,7 @@ summary: >
   the test. PR #4 updated (commit 33e079d).
 artifacts:
   pr_url: https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/pull/4
-  commit_sha: 33e079d
+  commit_sha: e762b3b
 commands:
   - cmd: "python -m pytest --cov=src.service --cov=src.repository --cov-report=term-missing --cov-fail-under=90 tests/test_service.py tests/test_repository.py"
     exit_code: 0
