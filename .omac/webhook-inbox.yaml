@@ -1,0 +1,345 @@
+meta:
+  name: webhook-inbox
+  closeout_node: integration-acceptance
+  plan_id: p-0fd681ec
+  acceptance_required: true
+  acceptance_file: webhook-inbox.acceptance.yaml
+  source_issues:
+  - 8303751a-566c-4a20-8e36-e9e3ad824799
+  - 0484d2ab-ec17-4edc-bf46-916ad44e8698
+  - d2a82028-b77c-47a7-a1b5-fbcc40be833c
+nodes:
+- id: shared-domain-foundation
+  worker: claude-ubuntu-newapi
+  blocked_by: []
+  work_item_id: null
+  status: todo
+  title: Establish shared domain, configuration, and test foundation
+  description: Establish the stable framework-free contracts required by the API and
+    persistence tracks.
+  reviewer: hermes-reviewer
+  contract:
+    objective: Deliver typed event/result/error/configuration contracts and the Python
+      quality-tooling baseline used by every implementation track.
+    acceptance:
+    - flow-health
+    non_goals:
+    - Do not add FastAPI routes, SQLite SQL, HMAC verification, or JSON parsing.
+    - Do not add queues, cloud services, or speculative abstractions.
+    verification_commands:
+    - python -m pytest --cov=src --cov-report=term-missing --cov-fail-under=90 tests/test_config.py
+      tests/test_domain.py
+    - ruff check src tests
+    - ruff format --check src tests
+    - python -m mypy src
+    integration_gates:
+    - name: shared-contracts-static-gate
+      layer: L0
+      source_of_truth:
+      - AITEAM-787 design: Core data and Cross-module contract
+      delivery_goal: Shared types and startup validation are importable without framework
+        or database coupling.
+      covers:
+      - event-model-contract
+      - startup-secret-validation
+      acceptance_refs:
+      - flow-health
+      commands:
+      - python -m pytest --cov=src --cov-report=term-missing --cov-fail-under=90 tests/test_config.py
+        tests/test_domain.py
+      - python -m mypy src
+      required_metrics:
+        coverage_percent: 90
+      artifacts: []
+    pr_base: main
+    source_of_truth:
+    - GOAL.md#product-scope
+    - AITEAM-787 design: Core data, Module boundary, and Cross-module contract
+    - AITEAM-788 acceptance document: flow-health
+    scope_paths:
+    - pyproject.toml
+    - requirements.in
+    - requirements.txt
+    - src/config.py
+    - src/domain.py
+    - src/errors.py
+    - tests/test_config.py
+    - tests/test_domain.py
+- id: persistence-and-dedup
+  worker: codex-ubuntu-newapi
+  blocked_by:
+  - shared-domain-foundation
+  work_item_id: null
+  status: todo
+  title: Implement service authentication, JSON validation, and SQLite deduplication
+  description: Implement the framework-free service and repository behavior against
+    the shared contracts.
+  reviewer: claude-macmini
+  contract:
+    objective: Verify HMAC before JSON parsing, reject invalid JSON, and persist accepted
+      events atomically with exact-byte transaction-safe deduplication.
+    acceptance:
+    - flow-receive-valid-webhook
+    - flow-reject-missing-signature
+    - flow-reject-invalid-signature
+    - flow-idempotent-duplicate
+    - flow-conflict-different-body
+    non_goals:
+    - Do not add FastAPI request handling, HTTP exception mapping, or bounded body
+      streaming.
+    - Do not use an in-memory mutex or a digest as the deduplication authority.
+    - Do not move HMAC comparison, JSON parsing, or transaction SQL into the API layer.
+    verification_commands:
+    - python -m pytest --cov=src.service --cov=src.repository --cov-report=term-missing
+      --cov-fail-under=90 tests/test_service.py tests/test_repository.py
+    - ruff check src tests
+    - ruff format --check src tests
+    - python -m mypy src
+    integration_gates:
+    - name: service-auth-and-dedup-gate
+      layer: L1
+      source_of_truth:
+      - AITEAM-787 design: service.verify_signature, service.receive_event, and Dedup
+          logic
+      delivery_goal: Service-level authentication and JSON validation precede one
+        authoritative SQLite dedup transaction.
+      covers:
+      - constant-time-hmac-verification
+      - verify-before-json-ordering
+      - invalid-json-rejection
+      - exact-byte-deduplication
+      - primary-key-conflict-resolution
+      acceptance_refs:
+      - flow-receive-valid-webhook
+      - flow-reject-missing-signature
+      - flow-reject-invalid-signature
+      - flow-idempotent-duplicate
+      - flow-conflict-different-body
+      commands:
+      - python -m pytest --cov=src.service --cov=src.repository --cov-report=term-missing
+        --cov-fail-under=90 tests/test_service.py tests/test_repository.py
+      required_metrics:
+        coverage_percent: 90
+      artifacts: []
+    pr_base: main
+    source_of_truth:
+    - AITEAM-787 design: Core data, Dedup logic, service.verify_signature, service.receive_event,
+        and repository.upsert_event
+    - AITEAM-788 acceptance document: flow-receive-valid-webhook, flow-reject-missing-signature,
+        flow-reject-invalid-signature, flow-idempotent-duplicate, and flow-conflict-different-body
+    scope_paths:
+    - src/repository.py
+    - src/service.py
+    - tests/test_repository.py
+    - tests/test_service.py
+- id: http-api-and-errors
+  worker: codex-macmini-newapi
+  blocked_by:
+  - shared-domain-foundation
+  work_item_id: null
+  status: todo
+  title: Implement FastAPI boundary, bounded reads, and stable errors
+  description: Implement the HTTP adapter against the service contract, using fakes
+    only to isolate API unit tests.
+  reviewer: hermes-reviewer
+  contract:
+    objective: Deliver POST, GET, and health routes with bounded raw-body reading,
+      header extraction, and documented HTTP response mapping.
+    acceptance:
+    - flow-reject-missing-signature
+    - flow-reject-invalid-signature
+    - flow-reject-missing-event-id
+    - flow-body-too-large
+    - flow-get-event
+    - flow-get-event-not-found
+    - flow-health
+    - flow-health-db-unhealthy
+    non_goals:
+    - Do not execute SQL, compare HMAC values, or parse webhook JSON in the API layer.
+    - Do not parse JSON before enforcing the 1 MiB raw-body limit.
+    - Do not log webhook secrets, signature headers, or full payloads.
+    verification_commands:
+    - python -m pytest --cov=src.api --cov-report=term-missing --cov-fail-under=90
+      tests/test_api.py
+    - ruff check src tests
+    - ruff format --check src tests
+    - python -m mypy src
+    integration_gates:
+    - name: http-boundary-contract-gate
+      layer: L1
+      source_of_truth:
+      - AITEAM-787 design: api.read_limited_body and Stable error JSON shape
+      delivery_goal: HTTP inputs are bounded and documented service outcomes map to
+        stable API responses.
+      covers:
+      - bounded-streaming-body-read
+      - error-response-mapping
+      - event-retrieval-and-health
+      acceptance_refs:
+      - flow-reject-missing-signature
+      - flow-reject-invalid-signature
+      - flow-reject-missing-event-id
+      - flow-body-too-large
+      - flow-get-event
+      - flow-get-event-not-found
+      - flow-health
+      - flow-health-db-unhealthy
+      commands:
+      - python -m pytest --cov=src.api --cov-report=term-missing --cov-fail-under=90
+        tests/test_api.py
+      required_metrics:
+        coverage_percent: 90
+      artifacts: []
+    pr_base: main
+    source_of_truth:
+    - GOAL.md#product-scope
+    - AITEAM-787 design: Module boundary, api.read_limited_body, and Stable error
+        JSON shape
+    - AITEAM-788 acceptance document: HTTP acceptance flows
+    scope_paths:
+    - src/api.py
+    - tests/test_api.py
+- id: delivery-assets
+  worker: claude-ubuntu-newapi
+  blocked_by:
+  - persistence-and-dedup
+  - http-api-and-errors
+  work_item_id: null
+  status: todo
+  title: Add and verify reproducible runtime, CI, and operator assets
+  description: Package the completed HTTP and persistence tracks into a verifiable
+    developer and container delivery surface.
+  reviewer: claude-macmini
+  contract:
+    objective: Deliver and execute a repository-owned delivery verifier for hashed
+      dependencies, CI structure, Docker non-root health, and complete operator documentation.
+    acceptance:
+    - flow-health
+    non_goals:
+    - Do not alter webhook business rules or duplicate service/API acceptance coverage.
+    - Do not add hosted deployment, Kubernetes, external databases, or credentials.
+    - Do not weaken hash pinning, the Python 3.10-3.13 matrix, non-root execution,
+      or the health-check requirement.
+    verification_commands:
+    - bash tests/verify_delivery.sh
+    integration_gates:
+    - name: delivery-artifacts-gate
+      layer: L1
+      source_of_truth:
+      - AITEAM-787 design: Delivery verification
+      delivery_goal: The integrated service has reproducible dependencies, required
+        CI configuration, complete usage documentation, and a healthy non-root container.
+      covers:
+      - clean-hashed-dependency-install
+      - ci-push-pr-matrix-and-docker-job
+      - all-readme-sections-and-signed-example
+      - non-root-container-healthcheck
+      acceptance_refs:
+      - flow-health
+      commands:
+      - bash tests/verify_delivery.sh
+      required_metrics: {}
+      artifacts:
+      - Dockerfile
+      - .github/workflows/ci.yml
+      - README.md
+      - tests/verify_delivery.sh
+    pr_base: main
+    source_of_truth:
+    - GOAL.md#production-constraints
+    - AITEAM-787 design: Delivery verification and Compatibility
+    - AITEAM-788 acceptance document: flow-health
+    scope_paths:
+    - Dockerfile
+    - .dockerignore
+    - .github/workflows/ci.yml
+    - README.md
+    - tests/verify_delivery.sh
+    coverage_gate: 0
+- id: integration-acceptance
+  worker: codex-ubuntu-newapi
+  blocked_by:
+  - persistence-and-dedup
+  - http-api-and-errors
+  - delivery-assets
+  work_item_id: null
+  status: todo
+  title: Integrate tracks and execute end-to-end acceptance
+  description: Join completed tracks, add the checked-in acceptance harness, repair
+    only cross-track defects, and collect final executable evidence.
+  reviewer: hermes-reviewer
+  contract:
+    objective: Deliver an integrated Webhook Inbox that passes every approved AITEAM-788
+      probe and all release gates on the main integration base.
+    acceptance:
+    - flow-receive-valid-webhook
+    - flow-reject-missing-signature
+    - flow-reject-invalid-signature
+    - flow-reject-missing-event-id
+    - flow-idempotent-duplicate
+    - flow-conflict-different-body
+    - flow-body-too-large
+    - flow-get-event
+    - flow-get-event-not-found
+    - flow-health
+    - flow-health-db-unhealthy
+    non_goals:
+    - Do not broaden scope beyond the approved FastAPI and SQLite inbox.
+    - Do not replace shared contracts or rewrite completed internals unless a minimal
+      cross-track fix is required.
+    - Do not claim acceptance without executing the checked-in equivalent of every
+      approved acceptance probe.
+    verification_commands:
+    - python -m pytest --cov=src --cov-report=term-missing --cov-fail-under=90 tests/
+    - ruff check src tests
+    - ruff format --check src tests
+    - python -m mypy src
+    - bash tests/verify_delivery.sh
+    - bash tests/acceptance.sh
+    integration_gates:
+    - name: full-webhook-inbox-acceptance
+      layer: L2
+      source_of_truth:
+      - AITEAM-788 acceptance document: all flow definitions and executable probes
+      - AITEAM-787 design: Delivery verification
+      delivery_goal: Every signed delivery, rejection, deduplication, retrieval, health,
+        packaging, and documentation requirement is proven together.
+      covers:
+      - signed-webhook-persistence
+      - service-authentication-and-invalid-json
+      - stable-error-contract
+      - duplicate-and-conflict-durability
+      - body-limit
+      - retrieval-and-health
+      - reproducible-delivery
+      acceptance_refs:
+      - flow-receive-valid-webhook
+      - flow-reject-missing-signature
+      - flow-reject-invalid-signature
+      - flow-reject-missing-event-id
+      - flow-idempotent-duplicate
+      - flow-conflict-different-body
+      - flow-body-too-large
+      - flow-get-event
+      - flow-get-event-not-found
+      - flow-health
+      - flow-health-db-unhealthy
+      commands:
+      - python -m pytest --cov=src --cov-report=term-missing --cov-fail-under=90 tests/
+      - ruff check src tests
+      - ruff format --check src tests
+      - python -m mypy src
+      - bash tests/verify_delivery.sh
+      - bash tests/acceptance.sh
+      required_metrics:
+        coverage_percent: 90
+      artifacts:
+      - tests/acceptance.sh
+    pr_base: main
+    source_of_truth:
+    - GOAL.md
+    - AITEAM-787 design: Acceptance mapping and Delivery verification
+    - AITEAM-788 acceptance document: all flow definitions and executable probes
+    scope_paths:
+    - src/**
+    - tests/acceptance.sh

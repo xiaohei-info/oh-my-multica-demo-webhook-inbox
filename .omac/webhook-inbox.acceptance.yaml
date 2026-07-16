@@ -1,0 +1,269 @@
+---
+schema: omac.acceptance/v1
+flows:
+  - id: flow-receive-valid-webhook
+    name: A correctly signed webhook, including valid empty JSON, is stored and returned
+    actions:
+      - step: Run the complete valid-delivery acceptance script from the repository root
+        how: |-
+          set -euo pipefail
+          tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+          cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >"$tmp/health.json" && break || true; sleep 0.1; done
+          test -s "$tmp/health.json"
+          body='{"type":"invoice.paid","amount":42}'; sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac test-secret -hex | sed 's/^.* //')
+          test "$(curl -sS -o "$tmp/new.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H 'X-Event-ID: evt-valid-1' -H "X-Webhook-Signature: sha256=$sig" --data-binary "$body")" = 201
+          for pair in 'evt-empty-object:{}' 'evt-empty-array:[]'; do id=${pair%%:*}; payload=${pair#*:}; h=$(printf '%s' "$payload" | openssl dgst -sha256 -hmac test-secret -hex | sed 's/^.* //'); test "$(curl -sS -o "$tmp/$id.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H "X-Event-ID: $id" -H "X-Webhook-Signature: sha256=$h" --data-binary "$payload")" = 201; done
+          python3 - "$tmp/new.json" "$tmp/inbox.db" "$tmp/server.log" <<'PY'
+          import json, sqlite3, sys
+          response, db, log = sys.argv[1:]
+          item = json.load(open(response)); assert item['event_id'] == 'evt-valid-1'; assert item['payload'] == {'type':'invoice.paid','amount':42}; assert item['received_at']
+          rows = sqlite3.connect(db).execute('SELECT event_id, body_raw, duplicate_count FROM events ORDER BY event_id').fetchall()
+          assert rows == [('evt-empty-array', b'[]', 0), ('evt-empty-object', b'{}', 0), ('evt-valid-1', b'{"type":"invoice.paid","amount":42}', 0)], rows
+          text = open(log).read(); assert 'test-secret' not in text and '{"type":"invoice.paid","amount":42}' not in text
+          PY
+        expected: The script exits 0; the three authenticated valid JSON payloads return 201, their exact bytes are stored once, and startup/request logs expose neither the secret nor full payload.
+
+  - id: flow-reject-missing-signature
+    name: A webhook without a signature is rejected without persistence
+    actions:
+      - step: Run the complete unsigned-delivery acceptance script from the repository root
+        how: |-
+          set -euo pipefail
+          tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+          cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && break || true; sleep 0.1; done
+          test "$(curl -sS -o "$tmp/response.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H 'X-Event-ID: evt-no-signature' --data-binary '{"ok":true}')" = 401
+          python3 - "$tmp/response.json" "$tmp/inbox.db" <<'PY'
+          import json, sqlite3, sys
+          body=json.load(open(sys.argv[1])); assert body['error'] == 'missing_signature' and isinstance(body['message'], str) and body['message']
+          assert sqlite3.connect(sys.argv[2]).execute('SELECT count(*) FROM events').fetchone()[0] == 0
+          PY
+        expected: The script exits 0; the response is HTTP 401 with missing_signature and the database contains no event.
+
+  - id: flow-reject-invalid-signature
+    name: A webhook with a malformed or non-matching signature is rejected without persistence
+    actions:
+      - step: Run the complete invalid-signature acceptance script from the repository root
+        how: |-
+          set -euo pipefail
+          tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+          cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && break || true; sleep 0.1; done
+          for header in 'sha256=deadbeef' 'not-a-signature'; do status=$(curl -sS -o "$tmp/${header//=/_}.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H 'X-Event-ID: evt-invalid-signature' -H "X-Webhook-Signature: $header" --data-binary '{"ok":true}'); test "$status" = 401; done
+          python3 - "$tmp" "$tmp/inbox.db" <<'PY'
+          import json, pathlib, sqlite3, sys
+          for path in pathlib.Path(sys.argv[1]).glob('*.json'):
+              body=json.load(open(path)); assert body['error'] == 'invalid_signature' and isinstance(body['message'], str) and body['message']
+          assert sqlite3.connect(sys.argv[2]).execute('SELECT count(*) FROM events').fetchone()[0] == 0
+          PY
+        expected: The script exits 0; both malformed and mismatching signature cases return HTTP 401 invalid_signature and write nothing.
+
+  - id: flow-reject-missing-event-id
+    name: A validly signed webhook with missing event metadata or invalid JSON is rejected without persistence
+    actions:
+      - step: Run the complete missing-or-empty-ID acceptance script from the repository root
+        how: |-
+          set -euo pipefail
+          tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+          cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && break || true; sleep 0.1; done
+          body='{"ok":true}'; sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac test-secret -hex | sed 's/^.* //')
+          test "$(curl -sS -o "$tmp/absent.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H "X-Webhook-Signature: sha256=$sig" --data-binary "$body")" = 400
+          test "$(curl -sS -o "$tmp/empty.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H 'X-Event-ID;' -H "X-Webhook-Signature: sha256=$sig" --data-binary "$body")" = 400
+          python3 - "$tmp/absent.json" "$tmp/empty.json" "$tmp/inbox.db" <<'PY'
+          import json, sqlite3, sys
+          for response in sys.argv[1:3]:
+              body=json.load(open(response)); assert body['error'] == 'missing_event_id' and isinstance(body['message'], str) and body['message']
+          assert sqlite3.connect(sys.argv[3]).execute('SELECT count(*) FROM events').fetchone()[0] == 0
+          PY
+        expected: The script exits 0; absent and explicitly empty IDs each return HTTP 400 missing_event_id and leave the database empty.
+      - step: Run the complete invalid-JSON acceptance script from the repository root
+        how: |-
+          set -euo pipefail
+          tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+          cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && break || true; sleep 0.1; done
+          for pair in 'evt-empty-json:' 'evt-invalid-json:{not-json'; do id=${pair%%:*}; payload=${pair#*:}; sig=$(printf '%s' "$payload" | openssl dgst -sha256 -hmac test-secret -hex | sed 's/^.* //'); test "$(curl -sS -o "$tmp/$id.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H "X-Event-ID: $id" -H "X-Webhook-Signature: sha256=$sig" --data-binary "$payload")" = 400; done
+          python3 - "$tmp" "$tmp/inbox.db" <<'PY'
+          import json, pathlib, sqlite3, sys
+          for path in pathlib.Path(sys.argv[1]).glob('evt-*.json'):
+              body=json.load(open(path)); assert body['error'] == 'invalid_json' and isinstance(body['message'], str) and body['message']
+          assert sqlite3.connect(sys.argv[2]).execute('SELECT count(*) FROM events').fetchone()[0] == 0
+          PY
+        expected: The script exits 0; signed empty and malformed JSON both return HTTP 400 invalid_json and no event is stored.
+
+  - id: flow-idempotent-duplicate
+    name: Sequential, concurrent, and post-restart same-ID deliveries with exact raw bytes are idempotent
+    actions:
+      - step: Run the complete sequential-duplicate acceptance script from the repository root
+        how: |-
+          set -euo pipefail
+          tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+          cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && break || true; sleep 0.1; done
+          body='{"kind":"same","n":1}'; sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac test-secret -hex | sed 's/^.* //')
+          test "$(curl -sS -o "$tmp/first.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H 'X-Event-ID: evt-duplicate-1' -H "X-Webhook-Signature: sha256=$sig" --data-binary "$body")" = 201
+          test "$(curl -sS -o "$tmp/second.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H 'X-Event-ID: evt-duplicate-1' -H "X-Webhook-Signature: sha256=$sig" --data-binary "$body")" = 200
+          python3 - "$tmp/first.json" "$tmp/second.json" "$tmp/inbox.db" <<'PY'
+          import json, sqlite3, sys
+          first, second = map(lambda p: json.load(open(p)), sys.argv[1:3]); assert second['duplicate'] is True and first['received_at'] == second['received_at']
+          assert sqlite3.connect(sys.argv[3]).execute('SELECT count(*), duplicate_count, body_raw FROM events WHERE event_id=?', ('evt-duplicate-1',)).fetchone() == (1, 1, b'{"kind":"same","n":1}')
+          PY
+        expected: The script exits 0; the first delivery is 201, the second is 200 with duplicate true, and one exact-byte row has duplicate_count 1.
+      - step: Run the complete concurrent-and-restart durability acceptance script from the repository root
+        how: |-
+          set -euo pipefail
+          tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'); db="$tmp/inbox.db"
+          cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
+          start() { WEBHOOK_SECRET=test-secret DATABASE_PATH="$db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!; for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && return; sleep 0.1; done; return 1; }
+          stop() { kill "$pid"; wait "$pid" || true; pid=''; }
+          start
+          body='{"kind":"concurrent"}'; sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac test-secret -hex | sed 's/^.* //')
+          curl -sS -o "$tmp/one.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H 'X-Event-ID: evt-concurrent-1' -H "X-Webhook-Signature: sha256=$sig" --data-binary "$body" >"$tmp/one.status" & one=$!
+          curl -sS -o "$tmp/two.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H 'X-Event-ID: evt-concurrent-1' -H "X-Webhook-Signature: sha256=$sig" --data-binary "$body" >"$tmp/two.status" & two=$!
+          wait "$one"; wait "$two"; test "$(sort "$tmp/one.status" "$tmp/two.status" | tr '\n' ' ')" = '200 201 '
+          received_at=$(python3 - "$db" <<'PY'
+          import sqlite3, sys
+          row=sqlite3.connect(sys.argv[1]).execute('SELECT count(*), duplicate_count, received_at FROM events WHERE event_id=?', ('evt-concurrent-1',)).fetchone(); assert row[0:2] == (1,1), row; print(row[2])
+          PY
+          )
+          stop; start
+          test "$(curl -sS -o "$tmp/restart.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H 'X-Event-ID: evt-concurrent-1' -H "X-Webhook-Signature: sha256=$sig" --data-binary "$body")" = 200
+          python3 - "$tmp/restart.json" "$db" "$received_at" <<'PY'
+          import json, sqlite3, sys
+          body=json.load(open(sys.argv[1])); assert body['duplicate'] is True and body['received_at'] == sys.argv[3]
+          assert sqlite3.connect(sys.argv[2]).execute('SELECT count(*), duplicate_count, received_at FROM events WHERE event_id=?', ('evt-concurrent-1',)).fetchone() == (1,2,sys.argv[3])
+          PY
+        expected: The script exits 0; concurrent requests yield one 201 and one 200, the persistent row survives restart, its original received_at is preserved, and duplicate_count advances from 1 to 2.
+
+  - id: flow-conflict-different-body
+    name: Reusing an event ID with different raw bytes is rejected and leaves the original event unchanged
+    actions:
+      - step: Run the complete conflicting-body acceptance script from the repository root
+        how: |-
+          set -euo pipefail
+          tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+          cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && break || true; sleep 0.1; done
+          first='{"state":"first"}'; first_sig=$(printf '%s' "$first" | openssl dgst -sha256 -hmac test-secret -hex | sed 's/^.* //')
+          second='{"state":"second"}'; second_sig=$(printf '%s' "$second" | openssl dgst -sha256 -hmac test-secret -hex | sed 's/^.* //')
+          test "$(curl -sS -o "$tmp/first.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H 'X-Event-ID: evt-conflict-1' -H "X-Webhook-Signature: sha256=$first_sig" --data-binary "$first")" = 201
+          test "$(curl -sS -o "$tmp/conflict.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H 'X-Event-ID: evt-conflict-1' -H "X-Webhook-Signature: sha256=$second_sig" --data-binary "$second")" = 409
+          python3 - "$tmp/conflict.json" "$tmp/inbox.db" <<'PY'
+          import json, sqlite3, sys
+          body=json.load(open(sys.argv[1])); assert body['error'] == 'conflict' and isinstance(body['message'], str) and body['message']
+          assert sqlite3.connect(sys.argv[2]).execute('SELECT count(*), body_raw, duplicate_count FROM events WHERE event_id=?', ('evt-conflict-1',)).fetchone() == (1,b'{"state":"first"}',0)
+          PY
+        expected: The script exits 0; the original request is 201, the changed-body request is 409 conflict, and the original stored row is unchanged.
+
+  - id: flow-body-too-large
+    name: Exactly one mebibyte is accepted while a larger signed body is rejected before persistence
+    actions:
+      - step: Run the complete size-boundary acceptance script from the repository root
+        how: |-
+          set -euo pipefail
+          tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+          cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && break || true; sleep 0.1; done
+          python3 - "$tmp/exact.json" "$tmp/over.json" <<'PY'
+          import sys
+          prefix, suffix = b'{"data":"', b'"}'
+          for path, size in zip(sys.argv[1:], (1_048_576, 1_048_577)):
+              payload = prefix + b'x' * (size-len(prefix)-len(suffix)) + suffix
+              assert len(payload) == size; open(path, 'wb').write(payload)
+          PY
+          exact_sig=$(openssl dgst -sha256 -hmac test-secret -hex "$tmp/exact.json" | sed 's/^.* //'); over_sig=$(openssl dgst -sha256 -hmac test-secret -hex "$tmp/over.json" | sed 's/^.* //')
+          test "$(curl -sS -o "$tmp/exact-response.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H 'X-Event-ID: evt-exact-limit' -H "X-Webhook-Signature: sha256=$exact_sig" --data-binary @"$tmp/exact.json")" = 201
+          test "$(curl -sS -o "$tmp/over-response.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H 'X-Event-ID: evt-over-limit' -H "X-Webhook-Signature: sha256=$over_sig" --data-binary @"$tmp/over.json")" = 413
+          python3 - "$tmp/over-response.json" "$tmp/inbox.db" <<'PY'
+          import json, sqlite3, sys
+          body=json.load(open(sys.argv[1])); assert body['error'] == 'body_too_large' and isinstance(body['message'], str) and body['message']
+          db=sqlite3.connect(sys.argv[2]); assert db.execute('SELECT length(body_raw) FROM events WHERE event_id=?', ('evt-exact-limit',)).fetchone() == (1_048_576,); assert db.execute('SELECT count(*) FROM events WHERE event_id=?', ('evt-over-limit',)).fetchone()[0] == 0
+          PY
+        expected: The script exits 0; 1,048,576 bytes receives 201 and is stored exactly, while 1,048,577 bytes receives 413 body_too_large and is not stored.
+
+  - id: flow-get-event
+    name: A stored event is retrieved by its event ID with its original fields
+    actions:
+      - step: Run the complete event-retrieval acceptance script from the repository root
+        how: |-
+          set -euo pipefail
+          tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+          cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && break || true; sleep 0.1; done
+          body='{"order":123,"status":"paid"}'; sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac test-secret -hex | sed 's/^.* //')
+          test "$(curl -sS -o "$tmp/created.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H 'X-Event-ID: evt-get-1' -H "X-Webhook-Signature: sha256=$sig" --data-binary "$body")" = 201
+          test "$(curl -sS -o "$tmp/fetched.json" -w '%{http_code}' "http://127.0.0.1:$port/events/evt-get-1")" = 200
+          python3 - "$tmp/created.json" "$tmp/fetched.json" <<'PY'
+          import json, sys
+          created, fetched = map(lambda p: json.load(open(p)), sys.argv[1:]); assert fetched['event_id'] == 'evt-get-1'; assert fetched['payload'] == {'order':123,'status':'paid'}; assert fetched['received_at'] == created['received_at']
+          PY
+        expected: The script exits 0; the stored event is returned with HTTP 200, equivalent payload, and its original received_at.
+
+  - id: flow-get-event-not-found
+    name: Retrieving an unknown event returns the stable not-found error
+    actions:
+      - step: Run the complete unknown-event acceptance script from the repository root
+        how: |-
+          set -euo pipefail
+          tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+          cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && break || true; sleep 0.1; done
+          test "$(curl -sS -o "$tmp/response.json" -w '%{http_code}' "http://127.0.0.1:$port/events/evt-unknown-1")" = 404
+          python3 - "$tmp/response.json" <<'PY'
+          import json, sys
+          body=json.load(open(sys.argv[1])); assert body['error'] == 'not_found' and isinstance(body['message'], str) and body['message']
+          PY
+        expected: The script exits 0; the unknown event response is HTTP 404 with the stable not_found error shape.
+
+  - id: flow-health
+    name: Health reports a reachable SQLite database and startup rejects a missing secret
+    actions:
+      - step: Run the complete healthy-database acceptance script from the repository root
+        how: |-
+          set -euo pipefail
+          tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+          cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/healthy.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >"$tmp/response.json" && break || true; sleep 0.1; done
+          test -s "$tmp/response.json"
+          python3 - "$tmp/response.json" "$tmp/server.log" <<'PY'
+          import json, sys
+          body=json.load(open(sys.argv[1])); assert isinstance(body, dict) and 'error' not in body
+          observed=[str(v).lower() for k,v in body.items() if 'database' in str(k).lower()]; assert observed and any(v in {'true','ok','healthy','reachable'} for v in observed), body
+          assert 'test-secret' not in open(sys.argv[2]).read()
+          PY
+        expected: The script exits 0; /health returns HTTP 200 with a positive database-health indicator and no secret appears in the captured server log.
+      - step: Run bounded absent-secret and empty-secret startup probes from the repository root
+        how: |-
+          set -euo pipefail
+          tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+          set +e
+          timeout 5s env -u WEBHOOK_SECRET DATABASE_PATH="$tmp/absent.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port 0 >"$tmp/absent.log" 2>&1; absent_rc=$?
+          timeout 5s env WEBHOOK_SECRET= DATABASE_PATH="$tmp/empty.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port 0 >"$tmp/empty.log" 2>&1; empty_rc=$?
+          set -e
+          test "$absent_rc" -ne 0; test "$absent_rc" -ne 124
+          test "$empty_rc" -ne 0; test "$empty_rc" -ne 124
+          grep -q 'StartupError' "$tmp/absent.log"
+          grep -q 'StartupError' "$tmp/empty.log"
+        expected: The script exits 0 only when absent and empty WEBHOOK_SECRET each fail promptly with a nonzero, non-timeout exit code and log StartupError before serving requests.
+
+  - id: flow-health-db-unhealthy
+    name: Health returns a stable service-unavailable error when the SQLite readiness query fails
+    actions:
+      - step: Execute the deterministic health-failure HTTP integration test
+        how: |-
+          Run: python3 -m pytest -q tests/test_api.py::test_health_db_unhealthy
+          The test must construct the FastAPI app with a repository/connection whose check_health readiness query returns False or raises an SQLite error, then call GET /health through the HTTP test client.
+        expected: The command exits 0 only if the actual HTTP response is 503 and exactly matches the stable JSON shape with error db_unhealthy and a non-empty message; an HTTP 200 is a test failure.
