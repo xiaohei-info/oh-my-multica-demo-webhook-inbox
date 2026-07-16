@@ -10,10 +10,10 @@ meta:
   - d2a82028-b77c-47a7-a1b5-fbcc40be833c
 nodes:
 - id: shared-domain-foundation
-  worker: codex-ubuntu-newapi
+  worker: claude-ubuntu-newapi
   blocked_by: []
   work_item_id: e0dd3f11-8ae9-4fe3-980a-e804c9d61c28
-  status: blocked
+  status: in_progress
   title: Establish shared domain, configuration, and test foundation
   description: Establish the stable framework-free contracts required by the API and
     persistence tracks.
