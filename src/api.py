@@ -17,6 +17,7 @@ from src.domain import (
 from src.errors import (
     AppError,
     BodyTooLargeError,
+    ConflictError,
     ErrorCode,
     MissingEventIdError,
     NotFoundError,
@@ -97,6 +98,8 @@ def create_app(service: WebhookService) -> FastAPI:
             raise MissingEventIdError()
         signature = request.headers.get("x-webhook-signature")
         result = service.receive_event(event_id, raw_body, signature)
+        if result.status is StatusCode.CONFLICT:
+            raise ConflictError()
         return JSONResponse(
             status_code=201 if result.status is StatusCode.CREATED else 200,
             content=_event_to_dict(

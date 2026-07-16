@@ -198,6 +198,24 @@ class TestHealth:
         }
 
 
+def test_health_db_unhealthy() -> None:
+    """Acceptance-reference node (tests/test_api.py::test_health_db_unhealthy).
+
+    Mirrors acceptance-document command
+    `python3 -m pytest -q tests/test_api.py::test_health_db_unhealthy`.
+    """
+    svc = ReceivingService(
+        health=HealthResult(status=HealthStatus.DEGRADED, database=DatabaseStatus.ERROR)
+    )
+    client = _client(svc)
+    response = client.get("/health")
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": "db_unhealthy",
+        "message": "Database is not reachable",
+    }
+
+
 class TestReceivePaths:
     def test_created_returned_as_201(self) -> None:
         client = _client(ReceivingService(status=StatusCode.CREATED))
@@ -226,3 +244,20 @@ class TestReceivePaths:
         )
         assert response.status_code == 200
         assert response.json()["duplicate"] is True
+
+    def test_conflict_returned_as_409(self) -> None:
+        client = _client(ReceivingService(status=StatusCode.CONFLICT))
+        response = client.post(
+            "/webhooks",
+            content=b'{"ok":true}',
+            headers={
+                "x-event-id": "evt-1",
+                "x-webhook-signature": "sha256=abc",
+                "content-type": "application/json",
+            },
+        )
+        assert response.status_code == 409
+        assert response.json() == {
+            "error": "conflict",
+            "message": "Event ID already exists with a different body",
+        }
