@@ -211,7 +211,7 @@ nodes:
   - persistence-and-dedup
   - http-api-and-errors
   work_item_id: dcc461f1-2eb7-44a4-a9ed-2b10f4f4c5fc
-  status: in_progress
+  status: done
   title: Add and verify reproducible runtime, CI, and operator assets
   description: Package the completed HTTP and persistence tracks into a verifiable
     developer and container delivery surface.
@@ -262,6 +262,8 @@ nodes:
     - README.md
     - tests/verify_delivery.sh
     coverage_gate: 0
+  merged: true
+  merged_at: '2026-07-16T21:47:17Z'
 - id: integration-acceptance
   worker: codex-ubuntu-newapi
   blocked_by:
