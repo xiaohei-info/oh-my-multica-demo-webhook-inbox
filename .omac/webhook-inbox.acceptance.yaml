@@ -9,7 +9,7 @@ flows:
           set -euo pipefail
           tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
           cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
-          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn compose:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
           for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >"$tmp/health.json" && break || true; sleep 0.1; done
           test -s "$tmp/health.json"
           body='{"type":"invoice.paid","amount":42}'; sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac test-secret -hex | sed 's/^.* //')
@@ -33,7 +33,7 @@ flows:
           set -euo pipefail
           tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
           cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
-          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn compose:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
           for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && break || true; sleep 0.1; done
           test "$(curl -sS -o "$tmp/response.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H 'X-Event-ID: evt-no-signature' --data-binary '{"ok":true}')" = 401
           python3 - "$tmp/response.json" "$tmp/inbox.db" <<'PY'
@@ -51,7 +51,7 @@ flows:
           set -euo pipefail
           tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
           cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
-          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn compose:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
           for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && break || true; sleep 0.1; done
           for header in 'sha256=deadbeef' 'not-a-signature'; do status=$(curl -sS -o "$tmp/${header//=/_}.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H 'X-Event-ID: evt-invalid-signature' -H "X-Webhook-Signature: $header" --data-binary '{"ok":true}'); test "$status" = 401; done
           python3 - "$tmp" "$tmp/inbox.db" <<'PY'
@@ -70,7 +70,7 @@ flows:
           set -euo pipefail
           tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
           cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
-          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn compose:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
           for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && break || true; sleep 0.1; done
           body='{"ok":true}'; sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac test-secret -hex | sed 's/^.* //')
           test "$(curl -sS -o "$tmp/absent.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H "X-Webhook-Signature: sha256=$sig" --data-binary "$body")" = 400
@@ -87,7 +87,7 @@ flows:
           set -euo pipefail
           tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
           cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
-          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn compose:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
           for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && break || true; sleep 0.1; done
           for pair in 'evt-empty-json:' 'evt-invalid-json:{not-json'; do id=${pair%%:*}; payload=${pair#*:}; sig=$(printf '%s' "$payload" | openssl dgst -sha256 -hmac test-secret -hex | sed 's/^.* //'); test "$(curl -sS -o "$tmp/$id.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H "X-Event-ID: $id" -H "X-Webhook-Signature: sha256=$sig" --data-binary "$payload")" = 400; done
           python3 - "$tmp" "$tmp/inbox.db" <<'PY'
@@ -106,7 +106,7 @@ flows:
           set -euo pipefail
           tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
           cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
-          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn compose:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
           for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && break || true; sleep 0.1; done
           body='{"kind":"same","n":1}'; sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac test-secret -hex | sed 's/^.* //')
           test "$(curl -sS -o "$tmp/first.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H 'X-Event-ID: evt-duplicate-1' -H "X-Webhook-Signature: sha256=$sig" --data-binary "$body")" = 201
@@ -122,7 +122,7 @@ flows:
           set -euo pipefail
           tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'); db="$tmp/inbox.db"
           cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
-          start() { WEBHOOK_SECRET=test-secret DATABASE_PATH="$db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!; for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && return; sleep 0.1; done; return 1; }
+          start() { WEBHOOK_SECRET=test-secret DATABASE_PATH="$db" python3 -m uvicorn compose:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!; for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && return; sleep 0.1; done; return 1; }
           stop() { kill "$pid"; wait "$pid" || true; pid=''; }
           start
           body='{"kind":"concurrent"}'; sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac test-secret -hex | sed 's/^.* //')
@@ -151,7 +151,7 @@ flows:
           set -euo pipefail
           tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
           cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
-          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn compose:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
           for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && break || true; sleep 0.1; done
           first='{"state":"first"}'; first_sig=$(printf '%s' "$first" | openssl dgst -sha256 -hmac test-secret -hex | sed 's/^.* //')
           second='{"state":"second"}'; second_sig=$(printf '%s' "$second" | openssl dgst -sha256 -hmac test-secret -hex | sed 's/^.* //')
@@ -172,7 +172,7 @@ flows:
           set -euo pipefail
           tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
           cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
-          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn compose:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
           for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && break || true; sleep 0.1; done
           python3 - "$tmp/exact.json" "$tmp/over.json" <<'PY'
           import sys
@@ -199,7 +199,7 @@ flows:
           set -euo pipefail
           tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
           cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
-          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn compose:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
           for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && break || true; sleep 0.1; done
           body='{"order":123,"status":"paid"}'; sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac test-secret -hex | sed 's/^.* //')
           test "$(curl -sS -o "$tmp/created.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" -H 'Content-Type: application/json' -H 'X-Event-ID: evt-get-1' -H "X-Webhook-Signature: sha256=$sig" --data-binary "$body")" = 201
@@ -218,7 +218,7 @@ flows:
           set -euo pipefail
           tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
           cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
-          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/inbox.db" python3 -m uvicorn compose:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
           for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null && break || true; sleep 0.1; done
           test "$(curl -sS -o "$tmp/response.json" -w '%{http_code}' "http://127.0.0.1:$port/events/evt-unknown-1")" = 404
           python3 - "$tmp/response.json" <<'PY'
@@ -235,7 +235,7 @@ flows:
           set -euo pipefail
           tmp=$(mktemp -d); pid=''; port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
           cleanup() { [ -z "$pid" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }; rm -rf "$tmp"; }; trap cleanup EXIT
-          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/healthy.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
+          WEBHOOK_SECRET=test-secret DATABASE_PATH="$tmp/healthy.db" python3 -m uvicorn compose:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!
           for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >"$tmp/response.json" && break || true; sleep 0.1; done
           test -s "$tmp/response.json"
           python3 - "$tmp/response.json" "$tmp/server.log" <<'PY'
@@ -250,8 +250,8 @@ flows:
           set -euo pipefail
           tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
           set +e
-          timeout 5s env -u WEBHOOK_SECRET DATABASE_PATH="$tmp/absent.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port 0 >"$tmp/absent.log" 2>&1; absent_rc=$?
-          timeout 5s env WEBHOOK_SECRET= DATABASE_PATH="$tmp/empty.db" python3 -m uvicorn src.api:app --host 127.0.0.1 --port 0 >"$tmp/empty.log" 2>&1; empty_rc=$?
+          timeout 5s env -u WEBHOOK_SECRET DATABASE_PATH="$tmp/absent.db" python3 -m uvicorn compose:app --host 127.0.0.1 --port 0 >"$tmp/absent.log" 2>&1; absent_rc=$?
+          timeout 5s env WEBHOOK_SECRET= DATABASE_PATH="$tmp/empty.db" python3 -m uvicorn compose:app --host 127.0.0.1 --port 0 >"$tmp/empty.log" 2>&1; empty_rc=$?
           set -e
           test "$absent_rc" -ne 0; test "$absent_rc" -ne 124
           test "$empty_rc" -ne 0; test "$empty_rc" -ne 124
@@ -264,6 +264,5 @@ flows:
     actions:
       - step: Execute the deterministic health-failure HTTP integration test
         how: |-
-          Run: python3 -m pytest -q tests/test_api.py::test_health_db_unhealthy
-          The test must construct the FastAPI app with a repository/connection whose check_health readiness query returns False or raises an SQLite error, then call GET /health through the HTTP test client.
+          python3 -m pytest -q tests/test_api.py::test_health_db_unhealthy
         expected: The command exits 0 only if the actual HTTP response is 503 and exactly matches the stable JSON shape with error db_unhealthy and a non-empty message; an HTTP 200 is a test failure.
