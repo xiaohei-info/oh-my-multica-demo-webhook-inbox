@@ -87,13 +87,6 @@ class Repository:
     def close(self) -> None:
         self._conn.close()
 
-    def check_health(self) -> bool:
-        try:
-            self._conn.execute("SELECT 1")
-            return True
-        except Exception:
-            return False
-
     def get_event(self, event_id: str) -> Event | None:
         row = self._conn.execute(
             "SELECT event_id, body_raw, payload_json, received_at, duplicate_count "

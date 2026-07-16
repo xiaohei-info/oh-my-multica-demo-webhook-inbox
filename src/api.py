@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -29,12 +29,11 @@ logger = logging.getLogger(__name__)
 MAX_CONTENT_LENGTH = 1_048_576
 
 
-@runtime_checkable
 class WebhookService(Protocol):
     """Service boundary that the HTTP adapter delegates to."""
 
     def receive_event(
-        self, signature: str | None, event_id: str, raw_body: bytes
+        self, event_id: str, raw_body: bytes, signature_header: str | None
     ) -> EventResult: ...
 
     def get_event(self, event_id: str) -> Event | None: ...
@@ -98,7 +97,7 @@ def create_app(service: WebhookService) -> FastAPI:
         if not event_id:
             raise MissingEventIdError()
         signature = request.headers.get("x-webhook-signature")
-        result = service.receive_event(signature, event_id, raw_body)
+        result = service.receive_event(event_id, raw_body, signature)
         if result.status is StatusCode.CONFLICT:
             raise ConflictError()
         return JSONResponse(
@@ -135,7 +134,7 @@ class _StubService:
     """
 
     def receive_event(
-        self, signature: str | None, event_id: str, raw_body: bytes
+        self, event_id: str, raw_body: bytes, signature_header: str | None
     ) -> EventResult:
         raise SignatureError(
             ErrorCode.MISSING_SIGNATURE, "Missing X-Webhook-Signature header"

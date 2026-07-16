@@ -25,6 +25,9 @@ test -f .github/workflows/ci.yml || fail "missing .github/workflows/ci.yml"
 for token in "branches: \[main\]" '"3.10"' '"3.11"' '"3.12"' '"3.13"' "docker build"; do
   grep -q "$token" .github/workflows/ci.yml || fail ".github/workflows/ci.yml missing \"$token\""
 done
+quality_job="$(sed -n '/^  quality:/,/^  test:/p' .github/workflows/ci.yml)"
+grep -q -- '--require-hashes.*requirements.txt' <<<"$quality_job" \
+  || fail "quality job does not install hash-pinned dev tools before lint"
 ok "ci.yml has push/PR triggers, Python 3.10-3.13 matrix, and docker build"
 
 # --- 3. README contains architecture / setup / test / docker / env / signed example ----

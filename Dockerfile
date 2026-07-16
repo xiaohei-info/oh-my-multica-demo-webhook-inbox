@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # Reproducible non-root webhook-inbox container.
 # Build:   docker build -t webhook-inbox .
 # Run:     docker run --rm -p 8000:8000 -e WEBHOOK_SECRET=devpw webhook-inbox
