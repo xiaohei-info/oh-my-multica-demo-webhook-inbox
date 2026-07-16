@@ -68,7 +68,7 @@ nodes:
   merged: true
   merged_at: '2026-07-16T14:25:51Z'
 - id: persistence-and-dedup
-  worker: claude-ubuntu-newapi
+  worker: codex-macmini-newapi
   blocked_by:
   - shared-domain-foundation
   work_item_id: ba212125-0adc-425c-a15d-58e6a9208ed1
