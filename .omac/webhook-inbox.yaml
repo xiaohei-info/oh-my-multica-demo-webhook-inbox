@@ -13,7 +13,7 @@ nodes:
   worker: claude-ubuntu-newapi
   blocked_by: []
   work_item_id: e0dd3f11-8ae9-4fe3-980a-e804c9d61c28
-  status: in_progress
+  status: blocked
   title: Establish shared domain, configuration, and test foundation
   description: Establish the stable framework-free contracts required by the API and
     persistence tracks.
@@ -70,7 +70,7 @@ nodes:
   blocked_by:
   - shared-domain-foundation
   work_item_id: null
-  status: todo
+  status: blocked
   title: Implement service authentication, JSON validation, and SQLite deduplication
   description: Implement the framework-free service and repository behavior against
     the shared contracts.
@@ -137,7 +137,7 @@ nodes:
   blocked_by:
   - shared-domain-foundation
   work_item_id: null
-  status: todo
+  status: blocked
   title: Implement FastAPI boundary, bounded reads, and stable errors
   description: Implement the HTTP adapter against the service contract, using fakes
     only to isolate API unit tests.
@@ -205,7 +205,7 @@ nodes:
   - persistence-and-dedup
   - http-api-and-errors
   work_item_id: null
-  status: todo
+  status: blocked
   title: Add and verify reproducible runtime, CI, and operator assets
   description: Package the completed HTTP and persistence tracks into a verifiable
     developer and container delivery surface.
@@ -263,7 +263,7 @@ nodes:
   - http-api-and-errors
   - delivery-assets
   work_item_id: null
-  status: todo
+  status: blocked
   title: Integrate tracks and execute end-to-end acceptance
   description: Join completed tracks, add the checked-in acceptance harness, repair
     only cross-track defects, and collect final executable evidence.
