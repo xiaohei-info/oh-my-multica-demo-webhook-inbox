@@ -72,7 +72,7 @@ nodes:
   blocked_by:
   - shared-domain-foundation
   work_item_id: ba212125-0adc-425c-a15d-58e6a9208ed1
-  status: blocked
+  status: done
   title: Implement service authentication, JSON validation, and SQLite deduplication
   description: Implement the framework-free service and repository behavior against
     the shared contracts.
@@ -134,6 +134,8 @@ nodes:
     - src/service.py
     - tests/test_repository.py
     - tests/test_service.py
+  merged: true
+  merged_at: '2026-07-16T19:58:59Z'
 - id: http-api-and-errors
   worker: claude-ubuntu-newapi
   blocked_by:
@@ -208,8 +210,8 @@ nodes:
   blocked_by:
   - persistence-and-dedup
   - http-api-and-errors
-  work_item_id: null
-  status: blocked
+  work_item_id: dcc461f1-2eb7-44a4-a9ed-2b10f4f4c5fc
+  status: in_progress
   title: Add and verify reproducible runtime, CI, and operator assets
   description: Package the completed HTTP and persistence tracks into a verifiable
     developer and container delivery surface.
