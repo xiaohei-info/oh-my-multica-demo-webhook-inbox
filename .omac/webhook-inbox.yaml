@@ -271,7 +271,7 @@ nodes:
   - http-api-and-errors
   - delivery-assets
   work_item_id: ab62b05c-1c24-4422-b00b-2d4335b67c8c
-  status: blocked
+  status: in_progress
   title: Integrate tracks and execute end-to-end acceptance
   description: Join completed tracks, add the checked-in acceptance harness, repair
     only cross-track defects, and collect final executable evidence.
