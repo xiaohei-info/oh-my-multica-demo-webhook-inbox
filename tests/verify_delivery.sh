@@ -57,19 +57,28 @@ ok "Dockerfile is non-root and has a healthcheck"
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   WEBHOOK_SECRET="${WEBHOOK_SECRET:-delivery-test-secret}"
   img="webhook-inbox:verify"
+  cid="verify-inbox-$(date +%s)-$$"
   db_dir="$(mktemp -d)"
-  trap 'docker rm -f verify-inbox >/dev/null 2>&1 || true; rm -rf "$db_dir"' EXIT
+  trap 'docker rm -f "$cid" >/dev/null 2>&1 || true; rm -rf "$db_dir"' EXIT
   docker build -t "$img" . >/tmp/docker-build.log 2>&1 || { cat /tmp/docker-build.log; fail "docker build failed"; }
   container_user_id="$(docker run --rm --entrypoint id "$img" | grep -oE 'uid=[0-9]+' | head -1)"
   test "$container_user_id" = "uid=1001" || fail "container did not run as non-root: $container_user_id"
-  docker run -d --name verify-inbox -p 127.0.0.1:18000:8000 \
-    -e WEBHOOK_SECRET="$WEBHOOK_SECRET" -e DATABASE_PATH=/data/inbox.db -v "$db_dir:/data" "$img" >/dev/null
-  port=18000
+  docker run -d --name "$cid" -p 127.0.0.1::8000 \
+    -e WEBHOOK_SECRET="$WEBHOOK_SECRET" -v "$db_dir:/data" "$img" >/dev/null \
+    || fail "docker run failed"
+  port="$(docker port "$cid" 8000/tcp | sed 's/.*://')"
+  test -n "$port" || fail "could not resolve mapped host port"
   for _ in $(seq 1 60); do
     curl -fsS "http://127.0.0.1:$port/health" >/tmp/health.json 2>/dev/null && break
     sleep 0.2
   done
   test -s /tmp/health.json || fail "container /health did not answer up"
+  for _ in $(seq 1 60); do
+    health="$(docker inspect --format='{{.State.Health.Status}}' "$cid" 2>/dev/null)"
+    test "$health" = "healthy" && break
+    sleep 0.5
+  done
+  test "$health" = "healthy" || fail "container did not reach healthy state (was: ${health:-unknown})"
   body='{"type":"verify"}'; sig="$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" -hex | sed 's/^.* //')"
   test "$(curl -sS -o /tmp/new.json -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" \
     -H "X-Event-ID: evt-verify-1" -H "X-Webhook-Signature: sha256=$sig" \
@@ -77,9 +86,9 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   test "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" \
     -H "X-Event-ID: evt-verify-1" -H "X-Webhook-Signature: sha256=$sig" \
     -H 'Content-Type: application/json' --data-binary "$body")" = "200"
-  docker rm -f verify-inbox >/dev/null 2>&1 || true
+  docker rm -f "$cid" >/dev/null 2>&1 || true
   docker rmi "$img" >/dev/null 2>&1 || true
-  ok "container runs as non-root, answers /health, accepts a valid signed webhook"
+  ok "container runs as non-root, answers /health, reaches healthy, accepts a valid signed webhook"
 else
   echo "SKIP: docker not available; runtime smoke test skipped"
 fi
