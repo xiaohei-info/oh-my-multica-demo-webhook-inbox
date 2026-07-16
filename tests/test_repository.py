@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import multiprocessing
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -8,7 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from src.domain import Event, StatusCode
-from src.repository import Repository, new_repository
+from src.repository import Repository, _init_connection, new_repository
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -198,3 +199,127 @@ class TestConcurrentUpsert:
         stored = repo.get_event("evt-concurrent")
         assert stored is not None
         assert stored.duplicate_count == workers - 1
+
+
+def _mp_worker(db_path: str, event_id: str, queue: multiprocessing.Queue) -> None:
+    """Separate-process worker: fresh connection, one upsert, report, close.
+
+    Kept at module level so the fork context can inherit it without pickling.
+    """
+    repo = None
+    try:
+        repo = new_repository(db_path)
+    except Exception as exc:  # noqa: BLE001
+        queue.put(("setup_error", exc))
+        return
+    try:
+        result = repo.upsert_event(_event(event_id, "payload"))
+    except Exception as exc:  # noqa: BLE001
+        queue.put(("error", exc))
+    else:
+        queue.put(("result", result.status))
+    finally:
+        repo.close()
+
+
+class TestConcurrentUpsertMultiprocess:
+    _WORKERS = 24
+    _JOIN_TIMEOUT = 30.0
+
+    def test_concurrent_multiprocess_same_id_writes_do_not_raise(
+        self, tmp_path: Path
+    ) -> None:
+        """Reproduces the separate-process startup race the thread test can't.
+
+        Each worker is its own OS process with its own connection, all hitting
+        the same fresh database. Fork is used so connection handles are born in
+        the worker (never shared). Fails fast: bounded joins, collected errors,
+        and an alive-process assertion instead of hanging on a missed barrier.
+        """
+        ctx = multiprocessing.get_context("fork")
+        db_path = str(tmp_path / "mp-concurrent.db")
+        queue: multiprocessing.Queue = ctx.Queue()
+        processes = [
+            ctx.Process(
+                target=_mp_worker,
+                args=(db_path, "evt-concurrent-mp", queue),
+            )
+            for _ in range(self._WORKERS)
+        ]
+        for p in processes:
+            p.start()
+        for p in processes:
+            p.join(timeout=self._JOIN_TIMEOUT)
+
+        results: list[StatusCode] = []
+        setup_errors: list[Exception] = []
+        errors: list[Exception] = []
+        while not queue.empty():
+            kind, value = queue.get_nowait()
+            if kind == "result":
+                results.append(value)  # type: ignore[arg-type]
+            elif kind == "setup_error":
+                setup_errors.append(value)  # type: ignore[arg-type]
+            else:
+                errors.append(value)  # type: ignore[arg-type]
+
+        assert all(not p.is_alive() for p in processes), "a worker hung"
+        assert not setup_errors, setup_errors
+        assert not errors, errors
+        assert len(results) == self._WORKERS
+        assert results.count(StatusCode.CREATED) == 1
+        assert results.count(StatusCode.DUPLICATE) == self._WORKERS - 1
+
+
+class _FakeConn:
+    """Minimal stand-in for sqlite3.Connection that always fails WAL conversion.
+
+    Lets the bounded-retry/close-on-terminal-failure path in
+    ``_init_connection`` be exercised deterministically without needing a real
+    contended database.
+    """
+
+    def __init__(self) -> None:
+        self.closed = False
+        self.executed: list[str] = []
+
+    def execute(self, sql: str):
+        self.executed.append(sql)
+        if "journal_mode=WAL" in sql:
+            raise sqlite3.OperationalError("database is locked")
+        return self  # acts as its own cursor
+
+    def fetchone(self):
+        return ("delete",)  # never "wal", so conversion is always attempted
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class TestInitConnection:
+    def test_wal_conversion_retries_and_closes_on_terminal_failure(self) -> None:
+        """Sustained busy error must exhaust the bounded retry budget, then
+        close the connection and re-raise rather than hanging or leaking the
+        handle."""
+        fake = _FakeConn()
+        with pytest.raises(sqlite3.OperationalError):
+            _init_connection(fake)
+        assert fake.closed
+        # busy_timeout set first, then one read + one WAL attempt per iteration.
+        assert fake.executed[0].startswith("PRAGMA busy_timeout")
+        assert sum(1 for s in fake.executed if "journal_mode=WAL" in s) == 5
+
+    def test_parse_timestamp_wraps_naive_datetime_as_utc(self, tmp_path: str) -> None:
+        db_path = f"{tmp_path}/naive.db"
+        repo = new_repository(db_path)
+        repo._conn.execute(
+            "INSERT INTO events (event_id, body_raw, payload_json, received_at, duplicate_count) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("evt-naive", b"{}", "{}", "2026-01-01T12:00:00", 0),
+        )
+        repo._conn.commit()
+        stored = repo.get_event("evt-naive")
+        assert stored is not None
+        assert stored.received_at == datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        assert stored.received_at.tzinfo is not None
+        repo.close()

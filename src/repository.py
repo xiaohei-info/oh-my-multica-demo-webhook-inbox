@@ -2,16 +2,23 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import threading
+import time
 from datetime import datetime, timezone
 
 from src.domain import Event, EventResult, StatusCode
 
-# Serializes the one-time WAL + schema initialization so concurrent connections
-# opening the same fresh database do not race to convert it to WAL mode (which would
-# convoy on the journal-mode-change lock and exceed the busy budget). This lock
-# governs setup only; all dedup authority remains in SQLite transactions.
-_init_lock = threading.Lock()
+# Set before any lock-taking statement so SQLite waits out contention on its
+# own file-level locks instead of erroring. This is the only cross-process
+# mechanism available: a threading.Lock would not serialize separate processes.
+_BUSY_TIMEOUT_MS = 5000
+
+# Bounded retry budget for the one-time conversion of a fresh database to WAL
+# mode. Conversion needs an exclusive lock, so the very first connections to a
+# new file can collide; the read-first check below means only the opening wave
+# ever attempts it, and this loop lets stragglers observe the finished
+# conversion (re-reading the mode each attempt) without retrying a doomed one.
+_WAL_INIT_ATTEMPTS = 5
+_WAL_INIT_BACKOFF_BASE_S = 0.01
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -31,20 +38,54 @@ def _parse_timestamp(raw: str) -> datetime:
     return dt
 
 
+def _init_connection(conn: sqlite3.Connection) -> None:
+    """Initialize a connection safely across concurrent processes.
+
+    Order matters: busy_timeout first (so SQLite waits on its own locks),
+    then read the current journal mode. A read of ``PRAGMA journal_mode`` needs
+    only a shared lock, so it is cheap and contention-free. If the database is
+    already in WAL mode we must NOT re-run ``PRAGMA journal_mode=WAL``: that
+    write form takes an exclusive lock, and on a fresh database many concurrent
+    converters would convoy and exceed the busy budget. Only when the mode is
+    not yet WAL do we attempt conversion, with bounded retry + backoff. Each
+    retry re-reads the mode first, so a straggler observes the winner's finished
+    conversion and returns without issuing another doomed ``WAL`` statement.
+    On terminal failure the connection is closed so the caller holds no wedged
+    handle, then the last error is surfaced.
+    """
+    conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
+    last_exc: sqlite3.OperationalError | None = None
+    for attempt in range(_WAL_INIT_ATTEMPTS):
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        if mode == "wal":
+            _ensure_schema(conn)
+            return
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            _ensure_schema(conn)
+            return
+        except sqlite3.OperationalError as exc:
+            last_exc = exc
+            if attempt + 1 >= _WAL_INIT_ATTEMPTS:
+                break
+            time.sleep(_WAL_INIT_BACKOFF_BASE_S * (2**attempt))
+    conn.close()
+    assert last_exc is not None
+    raise last_exc
+
+
+def _ensure_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(_SCHEMA)
+    conn.commit()
+
+
 class Repository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._conn = connection
-        self._conn.execute("PRAGMA busy_timeout=5000")
-        with _init_lock:
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._init_schema()
+        _init_connection(self._conn)
 
     def close(self) -> None:
         self._conn.close()
-
-    def _init_schema(self) -> None:
-        self._conn.execute(_SCHEMA)
-        self._conn.commit()
 
     def get_event(self, event_id: str) -> Event | None:
         row = self._conn.execute(
@@ -85,6 +126,10 @@ class Repository:
                 (event.event_id,),
             ).fetchone()
             if row is None:
+                # Unreachable with the current PRIMARY KEY schema (a conflict
+                # implies the row exists), but rollback leaves a clean
+                # transaction state rather than returning under an open failure.
+                self._conn.rollback()
                 return EventResult(event=event, status=StatusCode.CREATED)
             body_raw, payload_json, received_at, duplicate_count = row
             if body_raw == event.body_raw:
