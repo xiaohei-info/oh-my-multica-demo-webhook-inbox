@@ -12,12 +12,26 @@ cd "$ROOT"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 ok()   { echo "OK:   $*"; }
 
+run_dir="$(mktemp -d)"
+container_id=""
+image_name=""
+cleanup() {
+  if test -n "$container_id" && command -v docker >/dev/null 2>&1; then
+    docker rm -f "$container_id" >/dev/null 2>&1 || true
+  fi
+  if test -n "$image_name" && command -v docker >/dev/null 2>&1; then
+    docker rmi "$image_name" >/dev/null 2>&1 || true
+  fi
+  rm -rf "$run_dir"
+}
+trap cleanup EXIT
+
 # --- 1. Hashed dependencies install cleanly in an isolated venv ---------------------------
-VENV="$(mktemp -d)/venv"
+VENV="$run_dir/venv"
 python3 -m venv "$VENV"
 PATH="$VENV/bin:$PATH" PIP_CERT=REQUESTS_CA_BUNDLE=""
-"$VENV/bin/pip" install --require-hashes --no-deps --no-cache-dir -r requirements.txt >/tmp/hashed-install.log 2>&1 \
-  || fail "pip install with --require-hashes failed; see /tmp/hashed-install.log"
+"$VENV/bin/pip" install --require-hashes --no-deps --no-cache-dir -r requirements.txt >"$run_dir/hashed-install.log" 2>&1 \
+  || { cat "$run_dir/hashed-install.log"; fail "pip install with --require-hashes failed"; }
 ok "installs from pinned, hashed requirements.txt"
 for package in backports-asyncio-runner exceptiongroup tomli; do
   grep -Eq "^${package}==.+python_version < \"3\\.11\"" requirements.txt \
@@ -56,38 +70,39 @@ ok "Dockerfile is non-root and has a healthcheck"
 # --- 5. docker runtime smoke test (only if docker is available) -------------------------
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   WEBHOOK_SECRET="${WEBHOOK_SECRET:-delivery-test-secret}"
-  img="webhook-inbox:verify"
-  cid="verify-inbox-$(date +%s)-$$"
-  db_dir="$(mktemp -d)"
-  trap 'docker rm -f "$cid" >/dev/null 2>&1 || true; rm -rf "$db_dir"' EXIT
-  docker build -t "$img" . >/tmp/docker-build.log 2>&1 || { cat /tmp/docker-build.log; fail "docker build failed"; }
-  container_user_id="$(docker run --rm --entrypoint id "$img" | grep -oE 'uid=[0-9]+' | head -1)"
+  run_id="$(date +%s)-$$"
+  image_name="webhook-inbox:verify-$run_id"
+  container_name="verify-inbox-$run_id"
+  db_dir="$run_dir/data"
+  mkdir -p "$db_dir"
+  docker build -t "$image_name" . >"$run_dir/docker-build.log" 2>&1 \
+    || { cat "$run_dir/docker-build.log"; fail "docker build failed"; }
+  container_user_id="$(docker run --rm --entrypoint id "$image_name" | grep -oE 'uid=[0-9]+' | head -1)"
   test "$container_user_id" = "uid=1001" || fail "container did not run as non-root: $container_user_id"
-  docker run -d --name "$cid" -p 127.0.0.1::8000 \
-    -e WEBHOOK_SECRET="$WEBHOOK_SECRET" -v "$db_dir:/data" "$img" >/dev/null \
+  container_id="$(docker run -d --name "$container_name" -p 127.0.0.1::8000 \
+    -e WEBHOOK_SECRET="$WEBHOOK_SECRET" -v "$db_dir:/data" "$image_name")" \
     || fail "docker run failed"
-  port="$(docker port "$cid" 8000/tcp | sed 's/.*://')"
+  port="$(docker port "$container_id" 8000/tcp | sed 's/.*://')"
   test -n "$port" || fail "could not resolve mapped host port"
   for _ in $(seq 1 60); do
-    curl -fsS "http://127.0.0.1:$port/health" >/tmp/health.json 2>/dev/null && break
+    curl -fsS "http://127.0.0.1:$port/health" >"$run_dir/health.json" 2>/dev/null && break
     sleep 0.2
   done
-  test -s /tmp/health.json || fail "container /health did not answer up"
-  for _ in $(seq 1 60); do
-    health="$(docker inspect --format='{{.State.Health.Status}}' "$cid" 2>/dev/null)"
+  test -s "$run_dir/health.json" || fail "container /health did not answer up"
+  health="starting"
+  for _ in $(seq 1 150); do
+    health="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$container_id")"
     test "$health" = "healthy" && break
     sleep 0.5
   done
   test "$health" = "healthy" || fail "container did not reach healthy state (was: ${health:-unknown})"
   body='{"type":"verify"}'; sig="$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" -hex | sed 's/^.* //')"
-  test "$(curl -sS -o /tmp/new.json -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" \
+  test "$(curl -sS -o "$run_dir/new.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" \
     -H "X-Event-ID: evt-verify-1" -H "X-Webhook-Signature: sha256=$sig" \
     -H 'Content-Type: application/json' --data-binary "$body")" = "201"
   test "$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" \
     -H "X-Event-ID: evt-verify-1" -H "X-Webhook-Signature: sha256=$sig" \
     -H 'Content-Type: application/json' --data-binary "$body")" = "200"
-  docker rm -f "$cid" >/dev/null 2>&1 || true
-  docker rmi "$img" >/dev/null 2>&1 || true
   ok "container runs as non-root, answers /health, reaches healthy, accepts a valid signed webhook"
 else
   echo "SKIP: docker not available; runtime smoke test skipped"
