@@ -183,20 +183,6 @@ class TestHealth:
         assert body["database"] == "ok"
         assert "error" not in body
 
-    def test_db_unhealthy_returns_503(self) -> None:
-        svc = ReceivingService(
-            health=HealthResult(
-                status=HealthStatus.DEGRADED, database=DatabaseStatus.ERROR
-            )
-        )
-        client = _client(svc)
-        response = client.get("/health")
-        assert response.status_code == 503
-        assert response.json() == {
-            "error": "db_unhealthy",
-            "message": "Database is not reachable",
-        }
-
 
 def test_health_db_unhealthy() -> None:
     """Acceptance-reference node (tests/test_api.py::test_health_db_unhealthy).
