@@ -39,7 +39,8 @@ integration_gates:
   - name: service-auth-and-dedup-gate
     status: pass
     source_of_truth:
-      - AITEAM-787 design: service.verify_signature, service.receive_event, repository.upsert_event
+      - AITEAM-787 design: "Core data, Dedup logic, service.verify_signature, service.receive_event, and repository.upsert_event"
+      - AITEAM-788 acceptance document: "flow-receive-valid-webhook, flow-reject-missing-signature, flow-reject-invalid-signature, flow-idempotent-duplicate, and flow-conflict-different-body"
     delivery_goal: Service-level authentication and JSON validation precede one authoritative SQLite dedup transaction.
     commands:
       - cmd: "python -m pytest --cov=src.service --cov=src.repository --cov-report=term-missing --cov-fail-under=90 tests/test_service.py tests/test_repository.py"
@@ -49,7 +50,8 @@ integration_gates:
       coverage_percent: 96
     metrics:
       coverage_percent: 96
-    artifacts: []
+    artifacts:
+      - pr_url: https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/pull/4
 acceptance:
   - flow: flow-receive-valid-webhook
     status: pass
