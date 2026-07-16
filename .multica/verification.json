@@ -1,0 +1,57 @@
+{
+  "issue": "AITEAM-795",
+  "run": "integration-acceptance",
+  "gates": {
+    "pytest": {
+      "result": "pass",
+      "passed": 86,
+      "coverage": "97.18%",
+      "gate": "90%"
+    },
+    "ruff_check": {
+      "result": "pass"
+    },
+    "ruff_format": {
+      "result": "pass"
+    },
+    "mypy": {
+      "result": "pass"
+    },
+    "verify_delivery": {
+      "result": "pass",
+      "checks": [
+        "hashed-install",
+        "python3.10-compat",
+        "ci-matrix",
+        "readme-sections",
+        "non-root-docker",
+        "container-health",
+        "signed-webhook"
+      ]
+    },
+    "acceptance": {
+      "result": "pass",
+      "flows_total": 12,
+      "flows_passed": 12,
+      "flows": [
+        "flow-receive-valid-webhook",
+        "flow-reject-missing-signature",
+        "flow-reject-invalid-signature",
+        "flow-reject-missing-event-id",
+        "flow-idempotent-duplicate",
+        "flow-idempotent-concurrent",
+        "flow-conflict-different-body",
+        "flow-body-too-large",
+        "flow-get-event",
+        "flow-get-event-not-found",
+        "flow-health",
+        "flow-health-db-unhealthy"
+      ]
+    }
+  },
+  "changes": [
+    "src/repository.py",
+    "tests/acceptance.sh"
+  ],
+  "notes": "Fixed cross-track defect: repository stored received_at with sqlite default datetime adapter (space separator) while API returned datetime.isoformat() (T separator); concurrent-and-restart probe asserts stored==returned. Now stores canonical ISO string."
+}
