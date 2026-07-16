@@ -30,30 +30,51 @@ pass=0
 fail=0
 note() { printf '  - %s\n' "$*"; }
 
+kill_server() {
+  if [ -n "${AC_PID:-}" ]; then
+    kill "$AC_PID" 2>/dev/null || true
+    wait "$AC_PID" 2>/dev/null || true
+    AC_PID=""
+  fi
+}
+
+cleanup_server() {
+  kill_server
+  [ -z "${AC_TMP:-}" ] || rm -rf "$AC_TMP"
+  AC_TMP=""
+}
+
 boot_server() {
+  cleanup_server
   AC_TMP="$(mktemp -d)"
-  AC_LOG="$(mktemp)"
-  AC_DB="$(mktemp -d)/inbox.db"
+  AC_LOG="$AC_TMP/server.log"
+  AC_DB="$AC_TMP/inbox.db"
   AC_PORT="$($PY -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
   WEBHOOK_SECRET="test-secret" DATABASE_PATH="$AC_DB" \
     $PY -m uvicorn compose:app --host 127.0.0.1 --port "$AC_PORT" >"$AC_LOG" 2>&1 &
   AC_PID=$!
   for _ in $(seq 1 60); do
     curl -fsS "http://127.0.0.1:$AC_PORT/health" >/dev/null 2>&1 && return 0
+    kill -0 "$AC_PID" 2>/dev/null || break
     sleep 0.1
   done
-  echo "server did not become healthy" >&2
+  note "server did not become healthy"
+  tail -20 "$AC_LOG" >&2 || true
   return 1
 }
 
-kill_server() {
-  [ -n "${AC_PID:-}" ] && kill "$AC_PID" 2>/dev/null || true
-  wait "$AC_PID" 2>/dev/null || true
-  AC_PID=""
+wait_bounded() {
+  local pid="$1" rc
+  for _ in $(seq 1 50); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      if wait "$pid"; then return 0; else rc=$?; return "$rc"; fi
+    fi
+    sleep 0.1
+  done
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  return 124
 }
-
-cleanup() { kill_server; [ -n "${AC_TMP:-}" ] && rm -rf "$AC_TMP"; }
-trap cleanup EXIT
 
 secret="test-secret"
 sign() { printf '%s' "$1" | openssl dgst -sha256 -hmac "$secret" -hex | sed 's/^.* //'; }
@@ -62,8 +83,15 @@ echo "Webhook Inbox acceptance - AITEAM-788"
 echo "====================================="
 
 run_flow() {
-  local name="$1"; shift
-  if "$@"; then
+  local name="$1" rc; shift
+  (
+    AC_TMP=""; AC_PID=""
+    trap cleanup_server EXIT
+    set -euo pipefail
+    "$@"
+  )
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
     echo "PASS: $name"; pass=$((pass + 1))
   else
     echo "FAIL: $name"; fail=$((fail + 1))
@@ -211,6 +239,8 @@ assert sqlite3.connect(sys.argv[3]).execute(
     "SELECT count(*), duplicate_count, body_raw FROM events WHERE event_id=?",
     ("evt-duplicate-1",)).fetchone() == (1, 1, b'{"kind":"same","n":1}')
 PY
+  kill_server
+  assert_concurrent_restart_durability
 }
 
 # 6. flow-conflict-different-body
@@ -298,17 +328,21 @@ assert fetched["received_at"] == created["received_at"]
 PY
 }
 
-# 5b. flow-idempotent-duplicate: concurrent-and-restart durability
-flow_idempotent_concurrent() {
+# flow-idempotent-duplicate: concurrent-and-restart durability sub-probe
+assert_concurrent_restart_durability() (
+  set -euo pipefail
   note "concurrent same-id yields one 201/one 200; row survives restart"
   local tmp port db pid body sig one two
-  tmp="$(mktemp -d)"
+  tmp="$AC_TMP/concurrent"
+  mkdir -p "$tmp"
   port="$($PY -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
   db="$tmp/inbox.db"
   _sr() { WEBHOOK_SECRET=test-secret DATABASE_PATH="$db" $PY -m uvicorn compose:app --host 127.0.0.1 --port "$port" >"$tmp/server.log" 2>&1 & pid=$!; }
   _up() { for _ in $(seq 1 50); do curl -fsS "http://127.0.0.1:$port/health" >/dev/null 2>&1 && return 0; sleep 0.1; done; return 1; }
-  _down() { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; pid=""; }
-  _sr && _up || { note "server failed to start"; return 1; }
+  _down() { [ -z "${pid:-}" ] || { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; pid=""; }; }
+  _sr
+  trap _down EXIT
+  _up || { note "server failed to start"; return 1; }
   body='{"kind":"concurrent"}'
   sig=$(sign "$body")
   curl -sS -o "$tmp/one.json" -w '%{http_code}' -X POST "http://127.0.0.1:$port/webhooks" \
@@ -341,10 +375,7 @@ assert sqlite3.connect(sys.argv[2]).execute(
     "SELECT count(*), duplicate_count, received_at FROM events WHERE event_id=?",
     ("evt-concurrent-1",)).fetchone() == (1, 2, sys.argv[3])
 PY
-  rc=$?
-  _down
-  return $rc
-}
+)
 
 # 9. flow-get-event-not-found
 flow_get_event_not_found() {
@@ -377,11 +408,12 @@ assert "test-secret" not in open(sys.argv[2]).read()
 PY
   note "absent and empty WEBHOOK_SECRET fail startup with StartupError"
   local tmp log_absent log_empty pid_a pid_e rc_a rc_e
-  tmp="$(mktemp -d)"; log_absent="$tmp/absent.log"; log_empty="$tmp/empty.log"
+  tmp="$AC_TMP/startup"; mkdir -p "$tmp"
+  log_absent="$tmp/absent.log"; log_empty="$tmp/empty.log"
   DATABASE_PATH="$tmp/absent.db" $PY -m uvicorn compose:app --host 127.0.0.1 --port 0 >"$log_absent" 2>&1 & pid_a=$!
   DATABASE_PATH="$tmp/empty.db" WEBHOOK_SECRET='' $PY -m uvicorn compose:app --host 127.0.0.1 --port 0 >"$log_empty" 2>&1 & pid_e=$!
-  wait "$pid_a"; rc_a=$?; wait "$pid_e"; rc_e=$?
-  kill "$pid_a" "$pid_e" 2>/dev/null || true
+  if wait_bounded "$pid_a"; then rc_a=0; else rc_a=$?; fi
+  if wait_bounded "$pid_e"; then rc_e=0; else rc_e=$?; fi
   [ "$rc_a" -ne 0 ] && [ "$rc_a" -ne 124 ] || { note "absent secret exited $rc_a"; return 1; }
   [ "$rc_e" -ne 0 ] && [ "$rc_e" -ne 124 ] || { note "empty secret exited $rc_e"; return 1; }
   grep -q 'StartupError' "$log_absent" || { note "no StartupError in absent log"; return 1; }
@@ -391,7 +423,7 @@ PY
 # 11. flow-health-db-unhealthy (delegated deterministic test per acceptance doc)
 flow_health_db_unhealthy() {
   note "health returns 503 db_unhealthy when readiness query fails"
-  $PY -m pytest -q "tests/test_api.py::test_health_db_unhealthy" >/tmp/aith-health-db.log 2>&1
+  $PY -m pytest -q "tests/test_api.py::test_health_db_unhealthy"
 }
 
 echo ""
@@ -401,7 +433,6 @@ run_flow "flow-reject-missing-signature"     flow_reject_missing_signature
 run_flow "flow-reject-invalid-signature"     flow_reject_invalid_signature
 run_flow "flow-reject-missing-event-id"      flow_reject_missing_event_id
 run_flow "flow-idempotent-duplicate"         flow_idempotent_duplicate
-run_flow "flow-idempotent-concurrent"        flow_idempotent_concurrent
 run_flow "flow-conflict-different-body"      flow_conflict_different_body
 run_flow "flow-body-too-large"               flow_body_too_large
 run_flow "flow-get-event"                    flow_get_event
