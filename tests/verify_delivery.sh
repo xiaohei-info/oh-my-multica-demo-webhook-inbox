@@ -29,7 +29,6 @@ trap cleanup EXIT
 # --- 1. Hashed dependencies install cleanly in an isolated venv ---------------------------
 VENV="$run_dir/venv"
 python3 -m venv "$VENV"
-PATH="$VENV/bin:$PATH" PIP_CERT=REQUESTS_CA_BUNDLE=""
 "$VENV/bin/pip" install --require-hashes --no-deps --no-cache-dir -r requirements.txt >"$run_dir/hashed-install.log" 2>&1 \
   || { cat "$run_dir/hashed-install.log"; fail "pip install with --require-hashes failed"; }
 ok "installs from pinned, hashed requirements.txt"
