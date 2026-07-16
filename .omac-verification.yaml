@@ -1,0 +1,70 @@
+schema: omac.verification/v1
+task_ref: ba212125-0adc-425c-a15d-58e6a9208ed1
+issue_key: AITEAM-792
+env_setup:
+  - Reused the repository's pinned-dependency Python 3.14 dev environment (pytest, pytest-cov, ruff, mypy)
+pr_base: main
+summary: >
+  Fix the remaining flaky full-suite concurrency failure. On a fresh database,
+  24 connections racing to run PRAGMA journal_mode=WAL convoy on the
+  journal-mode-change lock and exceed the busy budget, raising
+  "database is locked" and tripping the barrier. Set busy_timeout before the
+  first lock-taking op, serialize the one-time WAL + schema init with a module
+  lock, pass an explicit connect timeout, and close per-thread connections in
+  the test. PR #4 updated (commit 33e079d).
+artifacts:
+  pr_url: https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/pull/4
+  commit_sha: 33e079d
+commands:
+  - cmd: "python -m pytest --cov=src.service --cov=src.repository --cov-report=term-missing --cov-fail-under=90 tests/test_service.py tests/test_repository.py"
+    exit_code: 0
+    summary: "34 passed; 96% coverage"
+  - cmd: "python -m pytest tests/"
+    exit_code: 0
+    summary: "72 passed (full suite)"
+  - cmd: "ruff check src tests"
+    exit_code: 0
+    summary: "all checks passed"
+  - cmd: "ruff format --check src tests"
+    exit_code: 0
+    summary: "11 files already formatted"
+  - cmd: "python -m mypy src"
+    exit_code: 0
+    summary: "no issues"
+  - cmd: "for i in $(seq 1 30); do python3 -m pytest -q tests/test_repository.py::TestConcurrentUpsert::test_concurrent_same_id_writes_do_not_raise || exit 1; done"
+    exit_code: 0
+    summary: "concurrency regression passed 30/30 consecutive runs"
+coverage: 96
+integration_gates:
+  - name: service-auth-and-dedup-gate
+    status: pass
+    source_of_truth:
+      - AITEAM-787 design: service.verify_signature, service.receive_event, repository.upsert_event
+    delivery_goal: Service-level authentication and JSON validation precede one authoritative SQLite dedup transaction.
+    commands:
+      - cmd: "python -m pytest --cov=src.service --cov=src.repository --cov-report=term-missing --cov-fail-under=90 tests/test_service.py tests/test_repository.py"
+        exit_code: 0
+        summary: "34 passed; 96% coverage"
+    required_metrics:
+      coverage_percent: 96
+    metrics:
+      coverage_percent: 96
+    artifacts: []
+acceptance:
+  - flow: flow-receive-valid-webhook
+    status: pass
+  - flow: flow-reject-missing-signature
+    status: pass
+  - flow: flow-reject-invalid-signature
+    status: pass
+  - flow: flow-idempotent-duplicate
+    status: pass
+    note: 24-concurrent-writer regression; 1 created / 23 duplicate / 0 errors; per-thread connections closed
+  - flow: flow-conflict-different-body
+    status: pass
+    note: repository returns EventResult(CONFLICT) (no raise); service passes through; api.py maps to 409
+operator_findings_addressed:
+  - Concurrent WAL-init lock convoy → busy_timeout before WAL pragma, serialized one-time init, explicit connect timeout, 30x green
+  - Per-thread connections in concurrency test now closed via Repository.close()
+  - Conflict contract and dedup authority unchanged (still exact-byte SQLite transaction)
+  - Delivery via omac work submit
