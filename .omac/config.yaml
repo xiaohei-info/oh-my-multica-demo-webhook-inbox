@@ -4,7 +4,7 @@ workspace: 410ade5e-8ae0-4402-b975-813dea2ff3e1
 project: 8fc5187a-ded5-4be5-a324-92cca645d0a2
 roles:
   planner: codex-ubuntu
-  orchestrator: hermes-orchestrator
+  orchestrator: codex-ubuntu
   workers:
   - codex-ubuntu-newapi
   - codex-macmini-newapi
@@ -12,7 +12,7 @@ roles:
   reviewers:
   - hermes-reviewer
   - claude-macmini
-  acceptor: hermes-pm
+  acceptor: codex-ubuntu
 defaults:
   max_parallel: 3
   poll_interval: 30
