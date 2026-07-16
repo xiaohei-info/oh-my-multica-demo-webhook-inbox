@@ -211,7 +211,7 @@ nodes:
   - persistence-and-dedup
   - http-api-and-errors
   work_item_id: dcc461f1-2eb7-44a4-a9ed-2b10f4f4c5fc
-  status: in_progress
+  status: blocked
   title: Add and verify reproducible runtime, CI, and operator assets
   description: Package the completed HTTP and persistence tracks into a verifiable
     developer and container delivery surface.
