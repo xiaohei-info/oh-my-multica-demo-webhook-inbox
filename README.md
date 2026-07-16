@@ -93,10 +93,16 @@ round, and reran acceptance after the source was repaired.
 
 Requires Python 3.10+, OpenSSL, and Docker for the container checks.
 
+### Local setup
+
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install --require-hashes -r requirements.txt
+```
 
+### Tests
+
+```bash
 bash tests/acceptance.sh
 bash tests/verify_delivery.sh
 ```
@@ -115,7 +121,9 @@ The normal quality gates are also available:
 .venv/bin/python -m mypy src
 ```
 
-## Service architecture
+## Service
+
+### Architecture
 
 ```text
 HTTP request
@@ -150,7 +158,27 @@ WEBHOOK_SECRET=changeme DATABASE_PATH=./inbox.db \
   .venv/bin/python -m uvicorn compose:app --host 127.0.0.1 --port 8000
 ```
 
-Send a signed webhook:
+### Environment variables
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `WEBHOOK_SECRET` | Yes | — | HMAC key used to verify `X-Webhook-Signature` |
+| `DATABASE_PATH` | No | `./webhook_inbox.db` | SQLite database path |
+
+### Docker
+
+```bash
+docker build -t webhook-inbox .
+docker run --rm -p 127.0.0.1:8000:8000 \
+  -e WEBHOOK_SECRET=changeme \
+  -v webhook-inbox-data:/data \
+  webhook-inbox
+```
+
+The image runs as UID 1001, persists SQLite data under `/data`, and reports
+container health through `GET /health`.
+
+### Signed webhook example
 
 ```bash
 SECRET="changeme"

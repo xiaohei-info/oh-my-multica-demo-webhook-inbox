@@ -81,10 +81,16 @@ Worker 负责产出改动，独立 Reviewer 在合并前重新执行合同中声
 
 需要 Python 3.10+、OpenSSL；容器检查还需要 Docker。
 
+### 本地环境
+
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install --require-hashes -r requirements.txt
+```
 
+### 测试
+
+```bash
 bash tests/acceptance.sh
 bash tests/verify_delivery.sh
 ```
@@ -101,7 +107,9 @@ bash tests/verify_delivery.sh
 .venv/bin/python -m mypy src
 ```
 
-## 服务架构
+## 服务
+
+### 架构
 
 ```text
 HTTP 请求
@@ -135,7 +143,26 @@ WEBHOOK_SECRET=changeme DATABASE_PATH=./inbox.db \
   .venv/bin/python -m uvicorn compose:app --host 127.0.0.1 --port 8000
 ```
 
-发送签名 Webhook：
+### 环境变量
+
+| 变量 | 必填 | 默认值 | 用途 |
+| --- | --- | --- | --- |
+| `WEBHOOK_SECRET` | 是 | — | 用于验证 `X-Webhook-Signature` 的 HMAC 密钥 |
+| `DATABASE_PATH` | 否 | `./webhook_inbox.db` | SQLite 数据库路径 |
+
+### Docker
+
+```bash
+docker build -t webhook-inbox .
+docker run --rm -p 127.0.0.1:8000:8000 \
+  -e WEBHOOK_SECRET=changeme \
+  -v webhook-inbox-data:/data \
+  webhook-inbox
+```
+
+镜像以 UID 1001 运行，将 SQLite 数据保存在 `/data`，并通过 `GET /health` 报告容器健康状态。
+
+### 签名 Webhook 示例
 
 ```bash
 SECRET="changeme"
