@@ -115,7 +115,7 @@ class Repository:
                     event.event_id,
                     event.body_raw,
                     json.dumps(event.payload),
-                    event.received_at,
+                    event.received_at.isoformat(),
                     event.duplicate_count,
                 ),
             )
