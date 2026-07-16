@@ -32,7 +32,7 @@ class Repository:
         self._init_schema()
 
     def _init_schema(self) -> None:
-        self._conn.executescript(_SCHEMA)
+        self._conn.execute(_SCHEMA)
         self._conn.commit()
 
     def get_event(self, event_id: str) -> Event | None:
@@ -52,9 +52,11 @@ class Repository:
         )
 
     def upsert_event(self, event: Event) -> EventResult:
-        cursor = self._conn.cursor()
+        return self._upsert_event_inner(event)
+
+    def _upsert_event_inner(self, event: Event) -> EventResult:
         try:
-            cursor.execute(
+            self._conn.execute(
                 "INSERT INTO events (event_id, body_raw, payload_json, received_at, duplicate_count) "
                 "VALUES (?, ?, ?, ?, ?)",
                 (

@@ -43,6 +43,18 @@ class TestRepositoryLifecycle:
         )
         assert result is not None
 
+    def test_pragma_setup_runs_on_open(self, tmp_path: str) -> None:
+        db_path = f"{tmp_path}/inbox.db"
+        repo = new_repository(db_path)
+        mode = repo._conn.execute("PRAGMA journal_mode").fetchone()[0]
+        assert mode == "wal"
+
+    def test_busy_timeout_is_set(self, tmp_path: str) -> None:
+        db_path = f"{tmp_path}/inbox.db"
+        repo = new_repository(db_path)
+        timeout = repo._conn.execute("PRAGMA busy_timeout").fetchone()[0]
+        assert timeout >= 1000
+
     def test_creates_schema_idempotently(self, tmp_path: str) -> None:
         db_path = f"{tmp_path}/inbox.db"
         new_repository(db_path)
@@ -136,15 +148,27 @@ class TestConcurrentUpsert:
     def test_concurrent_same_id_writes_do_not_raise(self, tmp_path: Path) -> None:
         db_path = tmp_path / "concurrent.db"
         workers = 24
-        barrier = threading.Barrier(workers)
+        timeout = 10.0
+        barrier = threading.Barrier(workers, timeout=timeout)
         errors: list[Exception] = []
+        setup_errors: list[Exception] = []
         lock = threading.Lock()
         created_count = {"n": 0}
         duplicated_count = {"n": 0}
 
         def worker() -> None:
-            repo = new_repository(str(db_path))
-            barrier.wait()
+            try:
+                repo = new_repository(str(db_path))
+            except Exception as exc:  # noqa: BLE001
+                with lock:
+                    setup_errors.append(exc)
+                return
+            try:
+                barrier.wait(timeout=timeout)
+            except threading.BrokenBarrierError as exc:
+                with lock:
+                    setup_errors.append(exc)
+                return
             try:
                 result = repo.upsert_event(_event("evt-concurrent", "payload"))
                 with lock:
@@ -160,9 +184,11 @@ class TestConcurrentUpsert:
         for t in threads:
             t.start()
         for t in threads:
-            t.join()
+            t.join(timeout=timeout * 2)
 
+        assert not setup_errors, setup_errors
         assert not errors, errors
+        assert all(not t.is_alive() for t in threads)
         assert created_count["n"] == 1
         assert duplicated_count["n"] == workers - 1
         repo = new_repository(str(db_path))

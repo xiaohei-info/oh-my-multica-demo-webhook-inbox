@@ -180,12 +180,14 @@ class TestReceiveEvent:
             event_id="evt-cf",
             body=first,
         )
-        with pytest.raises(ConflictError):
-            service.receive_event(
-                signature=_sign("super-secret", second),
-                event_id="evt-cf",
-                body=second,
-            )
+        result = service.receive_event(
+            signature=_sign("super-secret", second),
+            event_id="evt-cf",
+            body=second,
+        )
+        assert result.status is StatusCode.CONFLICT
+        assert result.event.body_raw == first
+        assert result.event.payload == {"state": "first"}
 
     def test_preserves_received_at_on_duplicate(self, service: Service) -> None:
         body = b'{"k":1}'
