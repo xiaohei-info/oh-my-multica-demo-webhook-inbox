@@ -19,6 +19,11 @@ PATH="$VENV/bin:$PATH" PIP_CERT=REQUESTS_CA_BUNDLE=""
 "$VENV/bin/pip" install --require-hashes --no-deps --no-cache-dir -r requirements.txt >/tmp/hashed-install.log 2>&1 \
   || fail "pip install with --require-hashes failed; see /tmp/hashed-install.log"
 ok "installs from pinned, hashed requirements.txt"
+for package in backports-asyncio-runner exceptiongroup tomli; do
+  grep -Eq "^${package}==.+python_version < \"3\\.11\"" requirements.txt \
+    || fail "requirements.txt is missing the Python 3.10 compatibility pin for ${package}"
+done
+ok "hashed lock retains Python 3.10 compatibility dependencies"
 
 # --- 2. Required CI file exists with the right matrix -----------------------------------
 test -f .github/workflows/ci.yml || fail "missing .github/workflows/ci.yml"
