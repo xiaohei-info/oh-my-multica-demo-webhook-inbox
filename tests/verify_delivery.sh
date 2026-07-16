@@ -52,9 +52,9 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   docker build -t "$img" . >/tmp/docker-build.log 2>&1 || { cat /tmp/docker-build.log; fail "docker build failed"; }
   container_user_id="$(docker run --rm --entrypoint id "$img" | grep -oE 'uid=[0-9]+' | head -1)"
   test "$container_user_id" = "uid=1001" || fail "container did not run as non-root: $container_user_id"
-  docker run -d --name verify-inbox -p 127.0.0.1::8000 \
-    -e WEBHOOK_SECRET -v "$db_dir:/data" "$img" >/dev/null
-  port="$(docker port verify-inbox 8000/tcp | sed 's/.*://')"
+  docker run -d --name verify-inbox -p 127.0.0.1:18000:8000 \
+    -e WEBHOOK_SECRET="$WEBHOOK_SECRET" -e DATABASE_PATH=/data/inbox.db -v "$db_dir:/data" "$img" >/dev/null
+  port=18000
   for _ in $(seq 1 60); do
     curl -fsS "http://127.0.0.1:$port/health" >/tmp/health.json 2>/dev/null && break
     sleep 0.2
