@@ -8,6 +8,10 @@
 这个仓库包含一个由 [oh-my-multica](https://github.com/xiaohei-info/oh-my-multica) 完整交付的 Webhook
 Inbox。整个过程使用真实的 Multica 工作项、Coding Agent Runtime、公开 Pull Request、独立评审和最终验收。
 
+<p align="center">
+  <img src="docs/assets/oh-my-multica-webhook-inbox-demo.svg" alt="Real Webhook Inbox delivery: a five-node DAG, signed event ingestion, idempotent retry, and final acceptance" width="100%">
+</p>
+
 ## 输入需求
 
 构建一个小型服务，用于接收第三方系统发送的签名 Webhook 事件。服务必须在解析 JSON 前，使用请求

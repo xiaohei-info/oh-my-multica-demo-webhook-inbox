@@ -9,6 +9,10 @@ This repository contains a Webhook Inbox delivered end to end by
 [oh-my-multica](https://github.com/xiaohei-info/oh-my-multica) through real Multica work items, Coding Agent
 runtimes, public Pull Requests, independent review, and final acceptance.
 
+<p align="center">
+  <img src="docs/assets/oh-my-multica-webhook-inbox-demo.svg" alt="Real Webhook Inbox delivery: a five-node DAG, signed event ingestion, idempotent retry, and final acceptance" width="100%">
+</p>
+
 ## Requirement
 
 Build a small service that third-party systems can send signed webhook events to. The service must verify the
