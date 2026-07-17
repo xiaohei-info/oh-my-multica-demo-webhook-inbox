@@ -5,9 +5,9 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-This repository contains a Webhook Inbox delivered end to end by
-[oh-my-multica](https://github.com/xiaohei-info/oh-my-multica) through real Multica work items, Coding Agent
-runtimes, public Pull Requests, independent review, and final acceptance.
+This repository is the finished result of one
+[oh-my-multica](https://github.com/xiaohei-info/oh-my-multica) delivery: a Webhook Inbox built through Multica work
+items and Coding Agent runtimes, reviewed in five public Pull Requests, and accepted against 11 service-level flows.
 
 <p align="center">
   <img src="docs/assets/oh-my-multica-webhook-inbox-demo.svg" alt="Real Webhook Inbox delivery: a five-node DAG, signed event ingestion, idempotent retry, and final acceptance" width="100%">
@@ -15,18 +15,17 @@ runtimes, public Pull Requests, independent review, and final acceptance.
 
 ## Requirement
 
-Build a small service that third-party systems can send signed webhook events to. The service must verify the
-HMAC-SHA256 signature against the exact request body before parsing JSON, store every valid event in SQLite, and
-remain correct when senders retry an event or deliver it concurrently.
+The brief was to build a small service that receives signed webhook events from third-party systems. It had to
+verify the HMAC-SHA256 signature against the exact request body before parsing JSON, store valid events in SQLite,
+and remain correct when senders retry an event or deliver it concurrently.
 
-The same event ID and body must never create a second record. Reusing an event ID with different content must be
-rejected without changing the original event. The service must also support event lookup and database health
-checks, enforce a 1 MiB body limit, return stable JSON errors, avoid logging secrets or complete payloads, and
-ship with reproducible dependencies, CI, and a non-root container.
+The same event ID and body could never create a second record. Reusing an ID with different content had to be
+rejected without changing the original event. The service also needed event lookup, database health checks, a
+1 MiB body limit, stable JSON errors, safe logging, reproducible dependencies, CI, and a non-root container.
 
 The full input is checked in as [`GOAL.md`](GOAL.md).
 
-## How the Agents collaborated
+## How the Agents worked together
 
 ```mermaid
 flowchart LR
@@ -43,14 +42,16 @@ flowchart LR
     M --> Z[Final acceptance: 11/11]
 ```
 
-Planner and Orchestrator Agents inspected the repository, defined acceptance, and dynamically planned a five-node
-delivery DAG. Worker Agents implemented the bounded nodes, with independent tracks running in parallel when their
-dependencies allowed it. Reviewer Agents reran each node's declared checks before merge, and the Acceptor Agent
-tested the integrated default branch from the HTTP boundary. The deterministic Loop controlled ready-node
-calculation, evidence gates, merge eligibility, and the final stop decision.
+Planning started with the repository and [`GOAL.md`](GOAL.md). Planner and Orchestrator Agents turned that input into
+acceptance criteria and a five-node DAG: one shared foundation, two parallel implementation tracks, delivery assets,
+and final integration. Worker Agents owned individual nodes instead of the whole project. Reviewer Agents reran each
+node's checks before merge, and the Acceptor Agent tested the integrated `main` branch through the public HTTP API.
 
-Planning, orchestration, and acceptance used `codex-ubuntu`. Three cost-efficient `newapi` runtimes handled the
-implementation workload, while separate Reviewer runtimes provided independent quality judgment.
+The deterministic Loop kept the graph moving. It calculated which nodes were ready, required evidence before a node
+could advance, enforced merge conditions, and stopped only after final acceptance passed.
+
+Planning, orchestration, and acceptance used `codex-ubuntu`. Three lower-cost `newapi` runtimes handled most of the
+implementation work, while separate Reviewer runtimes checked their output independently.
 
 | Node | Responsibility | Public delivery |
 | --- | --- | --- |
@@ -72,8 +73,8 @@ implementation workload, while separate Reviewer runtimes provided independent q
 | A caller requests a stored or unknown event | Return the parsed event with `200`, or `404` |
 | A caller checks service and database health | Return `200` when healthy, or `503` when the database is unavailable |
 
-The result is a runnable FastAPI and SQLite service with transaction-safe deduplication under sequential and
-concurrent delivery. It runs as UID 1001 in Docker, persists its database under `/data`, and exposes a container
+The delivered service uses FastAPI and SQLite, with transaction-safe deduplication for both sequential retries and
+concurrent delivery. It runs as UID 1001 in Docker, stores its database under `/data`, and includes a container
 healthcheck.
 
 ## Delivery evidence
@@ -89,12 +90,12 @@ healthcheck.
 | Final acceptance | 11/11 flows passed on the integrated `main` branch |
 | Controller result | exit 0 |
 
-The delivery facts are checked in as the [manifest DAG](.omac/webhook-inbox.yaml),
+These results are checked in as the [manifest DAG](.omac/webhook-inbox.yaml),
 [acceptance document](.omac/webhook-inbox.acceptance.yaml), and [delivery goal](GOAL.md).
 
 ## Reproduce the evidence
 
-Requires Python 3.10+, OpenSSL, and Docker for the container checks.
+To rerun the same checks, you need Python 3.10+, OpenSSL, and Docker for the container checks.
 
 ### Local setup
 
@@ -110,10 +111,10 @@ bash tests/acceptance.sh
 bash tests/verify_delivery.sh
 ```
 
-`tests/acceptance.sh` starts the real `compose:app` service in isolated
-temporary environments and covers all 11 approved flows, including concurrent
-same-ID delivery and persistence across restart. Each flow has bounded startup
-checks and guaranteed process/file cleanup.
+`tests/acceptance.sh` starts `compose:app` in isolated temporary environments
+and runs all 11 approved flows, including concurrent same-ID delivery and
+persistence across restart. Each flow uses bounded startup checks and cleans up
+its processes and temporary files.
 
 The normal quality gates are also available:
 
@@ -142,8 +143,8 @@ Repository (src/repository.py)
        SQLite primary-key dedup, exact-byte comparison, WAL
 ```
 
-The application is composed in [`compose.py`](compose.py). Framework code owns
-HTTP concerns, service code owns authentication and parsing order, and the
+[`compose.py`](compose.py) wires the layers together. The API layer handles
+HTTP concerns, the service controls authentication and parsing order, and the
 repository owns the deduplication transaction.
 
 ### Endpoints
@@ -198,7 +199,7 @@ curl -sS -X POST http://127.0.0.1:8000/webhooks \
 Replaying the exact event ID and raw body returns `200` with
 `"duplicate": true`. Reusing the ID with different bytes returns `409`.
 
-## Production constraints implemented
+## Production constraints
 
 - HMAC comparison is constant time, and signature verification happens before
   JSON parsing.
@@ -212,11 +213,11 @@ Replaying the exact event ID and raw body returns `200` with
 
 ## About oh-my-multica
 
-[oh-my-multica](https://github.com/xiaohei-info/oh-my-multica) is a software
-delivery control layer built on Multica. Agents still design, plan, implement,
-review, and accept work. Deterministic software owns dependency scheduling,
-evidence gates, bounded rework, merge conditions, recovery, and the final stop
-decision.
+[oh-my-multica](https://github.com/xiaohei-info/oh-my-multica) adds a software
+delivery control layer to Multica. In this demo, Agents chose the design,
+decomposed the requirement, wrote the code, and reviewed the changes. The Loop
+handled dependencies, evidence gates, merge conditions, recovery, and the final
+completion decision.
 
 Read the [oh-my-multica README](https://github.com/xiaohei-info/oh-my-multica#readme) for the delivery model behind
 this project.
