@@ -5,51 +5,45 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-这个仓库是 [oh-my-multica](https://github.com/xiaohei-info/oh-my-multica) 的真实端到端交付案例。
-项目从一个需求开始：构建一个满足生产约束的小型 Webhook 服务，并持续推进，直到设计、开发、CI、
-独立评审、合并和最终验收全部完成。
+这个仓库包含一个由 [oh-my-multica](https://github.com/xiaohei-info/oh-my-multica) 完整交付的 Webhook
+Inbox。整个过程使用真实的 Multica 工作项、Coding Agent Runtime、公开 Pull Request、独立评审和最终验收。
 
-最终交付的是一个 FastAPI + SQLite 服务。它验证 HMAC-SHA256 签名，原子化保存请求原始字节，
-依靠数据库约束而不是内存锁处理重复投递，以非 root 容器运行，并提供仓库内可执行的验收 Harness。
+## 输入需求
 
-这不是主项目中的 mock demo。整个过程在 Multica 上使用真实 Coding Agent Runtime 和真实 Pull Request 完成。
+构建一个小型服务，用于接收第三方系统发送的签名 Webhook 事件。服务必须在解析 JSON 前，使用请求
+原始 Body 验证 HMAC-SHA256 签名；合法事件保存到 SQLite；发送方重试或并发投递时，服务仍然只能
+保存一条事件记录。
 
-## 结果概览
+同一事件 ID 和原始 Body 再次投递时不能生成新记录；同一事件 ID 携带不同内容时必须拒绝，并保持
+原事件不变。服务还需要提供事件查询和数据库健康检查，限制 1 MiB 请求体，返回稳定的 JSON 错误，
+不记录密钥或完整 Payload，并提供可复现依赖、CI 和非 root 容器。
 
-| 证据 | 结果 |
-| --- | --- |
-| 交付 DAG | 5/5 节点收敛为 `done` |
-| Pull Request | 5 个经过评审的 PR 合并；1 个早期基础实现被后续版本替代 |
-| 测试 | 86 tests 通过 |
-| 覆盖率 | 97.18%，高于 90% 门槛 |
-| CI | Python 3.10、3.11、3.12、3.13 全部通过 |
-| 容器交付 | 非 root 镜像、Healthcheck、签名 Webhook 冒烟测试通过 |
-| 最终验收 | 集成后的 `main` 分支 11/11 flows 通过 |
-| 控制器结果 | exit 0 |
+完整输入保存在 [`GOAL.md`](GOAL.md) 中。
 
-交付控制产物都保存在仓库中。你可以直接查看
-[manifest DAG](.omac/webhook-inbox.yaml)、
-[验收文档](.omac/webhook-inbox.acceptance.yaml)和
-[交付目标](GOAL.md)，不需要相信 Agent 的文字总结。
-
-## oh-my-multica 做了什么
+## Agent 如何协作
 
 ```mermaid
 flowchart LR
-    R[一个交付目标] --> P[设计、验收、项目规则]
-    P --> D[Agent 动态规划 5 节点 DAG]
-    D --> F[共享地基]
+    R[One delivery goal] --> P[Design, acceptance, project rules]
+    P --> D[Agent-authored 5-node DAG]
+    D --> F[Shared foundation]
     F --> A[HTTP API]
-    F --> S[Service 与 SQLite 去重]
-    A --> X[交付资产]
+    F --> S[Service and SQLite dedup]
+    A --> X[Delivery assets]
     S --> X
-    X --> I[集成验收]
-    I --> Q[独立评审与 CI]
-    Q --> M[合并]
-    M --> Z[最终验收 11/11]
+    X --> I[Integration acceptance]
+    I --> Q[Independent review and CI]
+    Q --> M[Merge]
+    M --> Z[Final acceptance: 11/11]
 ```
 
-实现任务按真实架构边界拆分，不是套用固定 demo 脚本：
+Planner 和 Orchestrator Agent 检查仓库、定义验收标准，并动态规划出五节点交付 DAG。Worker Agent 在
+任务边界内完成实现，依赖允许时并行开发；Reviewer Agent 在合并前独立复跑每个节点声明的检查；
+Acceptor Agent 从 HTTP 边界验收集成后的默认分支。确定性交付 Loop 负责计算 ready nodes、检查证据、
+判断合并资格和最终停止条件。
+
+规划、编排和验收使用 `codex-ubuntu`；三个高性价比 `newapi` Runtime 承担主要实现工作；独立 Reviewer
+Runtime 负责质量判断。
 
 | 节点 | 职责 | 公开交付证据 |
 | --- | --- | --- |
@@ -57,25 +51,38 @@ flowchart LR
 | HTTP API | 有界读取、请求头、稳定错误响应、健康检查 | [PR #3](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/pull/3) |
 | 持久化与去重 | 先验签后解析、事务安全的 SQLite 去重 | [PR #4](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/pull/4) |
 | 交付资产 | Hash 固定依赖、CI 矩阵、Docker 镜像、运维文档 | [PR #5](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/pull/5) |
-| 集成验收 | 全链路 Harness 与跨 Track 最终修复 | [PR #6](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/pull/6) |
+| 集成验收 | 全链路验收 Harness 与集成服务验证 | [PR #6](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/pull/6) |
 
-Worker 负责产出改动，独立 Reviewer 在合并前重新执行合同中声明的验证命令。最后由 Acceptor 从
-用户可见的 HTTP 边界验收集成后的默认分支。
+## 最终业务效果
 
-## 这个案例最有价值的一次失败
+| 场景 | 服务结果 |
+| --- | --- |
+| 使用合法 ID、签名和 JSON Body 投递新事件 | 原子化保存并返回 `201` |
+| 再次投递相同 ID 和原始 Body | 返回 `200` 和 `"duplicate": true`，数据库仍只有一条记录 |
+| 使用相同 ID 投递不同内容 | 返回 `409`，原事件保持不变 |
+| 缺少签名或签名错误 | 返回 `401`，不写入数据 |
+| 请求 Body 超过 1 MiB | 返回 `413`，不写入数据 |
+| 查询已保存或不存在的事件 | 返回解析后的事件与 `200`，或返回 `404` |
+| 检查服务和数据库健康状态 | 健康时返回 `200`，数据库不可用时返回 `503` |
 
-第一轮最终验收没有通过。
+最终得到一个可运行的 FastAPI + SQLite 服务。它能在顺序重试和并发投递下执行事务安全去重，以
+UID 1001 在 Docker 中运行，把数据库持久化到 `/data`，并提供容器 Healthcheck。
 
-生产服务和仓库内 Harness 使用 `compose:app`，但经过评审的验收文档仍然启动了刻意保留的最小
-`src.api:app` Stub。Acceptor 没有复用 Worker 的成功测试结论，而是严格执行验收文档，记录了
-2 个 flow 通过、9 个 flow 失败。
+## 交付证据
 
-验收源在 commit
-[`56daf00`](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/commit/56daf007c2cd6fc1b25c03e22ad4e957d18ea2a3)
-中完成修正。随后系统从头重跑完整验收文档，11 个 flow 全部通过，控制器返回 exit 0。
+| 证据 | 结果 |
+| --- | --- |
+| 交付 DAG | 5/5 节点收敛为 `done` |
+| Pull Request | 5 个经过评审的 PR 合并 |
+| 测试 | 86 tests 通过 |
+| 覆盖率 | 97.18%，高于 90% 门槛 |
+| CI | Python 3.10、3.11、3.12、3.13 全部通过 |
+| 容器交付 | 非 root 镜像、Healthcheck、签名 Webhook 冒烟测试通过 |
+| 最终验收 | 集成后的 `main` 分支 11/11 flows 通过 |
+| 控制器结果 | exit 0 |
 
-这次失败正是案例的意义。代码生成当时已经结束，但交付 Loop 仍然发现证据来源与生产入口不一致，
-拒绝把项目标记为完成，保留失败轮次，并在修正验收源后重新执行最终验收。
+交付事实保存在 [manifest DAG](.omac/webhook-inbox.yaml)、
+[验收文档](.omac/webhook-inbox.acceptance.yaml)和[交付目标](GOAL.md)中。
 
 ## 复现证据
 
@@ -193,8 +200,8 @@ curl -sS -X POST http://127.0.0.1:8000/webhooks \
 Agent 仍然负责设计、规划、开发、评审和验收；确定性程序负责依赖调度、证据门、有界返工、合并条件、
 恢复和最终停止判断。
 
-阅读[《Webhook Inbox：一次真实的端到端交付》](https://github.com/xiaohei-info/oh-my-multica/blob/main/docs/case-studies/webhook-inbox-end-to-end.zh-CN.md)，
-查看完整交付时间线、失败证据和模型角色分工。
+阅读 [oh-my-multica README](https://github.com/xiaohei-info/oh-my-multica/blob/main/README.zh-CN.md)，了解这个
+项目背后的交付模型。
 
 ## License
 

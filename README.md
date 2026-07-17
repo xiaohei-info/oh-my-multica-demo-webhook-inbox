@@ -5,39 +5,24 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-This repository is the real end-to-end delivery demo for
-[oh-my-multica](https://github.com/xiaohei-info/oh-my-multica). It started with
-one requirement: build a small webhook service with production constraints,
-then keep going until the change had passed design, implementation, CI,
-independent review, merge, and final acceptance.
+This repository contains a Webhook Inbox delivered end to end by
+[oh-my-multica](https://github.com/xiaohei-info/oh-my-multica) through real Multica work items, Coding Agent
+runtimes, public Pull Requests, independent review, and final acceptance.
 
-The result is a FastAPI and SQLite service that verifies HMAC-SHA256
-signatures, stores exact request bytes atomically, handles duplicate deliveries
-without an in-memory lock, ships as a non-root container, and has a checked-in
-acceptance harness.
+## Requirement
 
-This is not the mock demo from the main project. The work ran through Multica
-with real Coding Agent runtimes and real pull requests.
+Build a small service that third-party systems can send signed webhook events to. The service must verify the
+HMAC-SHA256 signature against the exact request body before parsing JSON, store every valid event in SQLite, and
+remain correct when senders retry an event or deliver it concurrently.
 
-## Result at a glance
+The same event ID and body must never create a second record. Reusing an event ID with different content must be
+rejected without changing the original event. The service must also support event lookup and database health
+checks, enforce a 1 MiB body limit, return stable JSON errors, avoid logging secrets or complete payloads, and
+ship with reproducible dependencies, CI, and a non-root container.
 
-| Evidence | Result |
-| --- | --- |
-| Delivery DAG | 5/5 nodes converged to `done` |
-| Pull requests | 5 reviewed PRs merged; one early foundation PR was superseded |
-| Test suite | 86 tests passed |
-| Coverage | 97.18%, above the 90% gate |
-| CI | Python 3.10, 3.11, 3.12, and 3.13 passed |
-| Container delivery | Non-root image, healthcheck, signed-webhook smoke test passed |
-| Final acceptance | 11/11 flows passed on the integrated `main` branch |
-| Controller result | exit 0 |
+The full input is checked in as [`GOAL.md`](GOAL.md).
 
-The delivery artifacts are checked in. Read the
-[manifest DAG](.omac/webhook-inbox.yaml), the
-[acceptance document](.omac/webhook-inbox.acceptance.yaml), and the
-[delivery goal](GOAL.md) without relying on an Agent summary.
-
-## What oh-my-multica coordinated
+## How the Agents collaborated
 
 ```mermaid
 flowchart LR
@@ -54,8 +39,14 @@ flowchart LR
     M --> Z[Final acceptance: 11/11]
 ```
 
-The implementation work was split by architectural boundary, not by a fixed
-demo script:
+Planner and Orchestrator Agents inspected the repository, defined acceptance, and dynamically planned a five-node
+delivery DAG. Worker Agents implemented the bounded nodes, with independent tracks running in parallel when their
+dependencies allowed it. Reviewer Agents reran each node's declared checks before merge, and the Acceptor Agent
+tested the integrated default branch from the HTTP boundary. The deterministic Loop controlled ready-node
+calculation, evidence gates, merge eligibility, and the final stop decision.
+
+Planning, orchestration, and acceptance used `codex-ubuntu`. Three cost-efficient `newapi` runtimes handled the
+implementation workload, while separate Reviewer runtimes provided independent quality judgment.
 
 | Node | Responsibility | Public delivery |
 | --- | --- | --- |
@@ -63,31 +54,39 @@ demo script:
 | HTTP API | Bounded body reads, headers, stable HTTP errors, health endpoint | [PR #3](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/pull/3) |
 | Persistence and dedup | Verify-before-parse service flow and transaction-safe SQLite deduplication | [PR #4](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/pull/4) |
 | Delivery assets | Hashed dependencies, CI matrix, Docker image, operator docs | [PR #5](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/pull/5) |
-| Integration acceptance | Full-path harness and the final cross-track fix | [PR #6](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/pull/6) |
+| Integration acceptance | Full-path acceptance harness and integrated service verification | [PR #6](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/pull/6) |
 
-Workers produced the changes. Separate reviewer Agents reran the declared
-verification commands before merge. A final acceptor then tested the integrated
-default branch from the user-facing HTTP boundary.
+## Delivered behavior
 
-## The failure that made this demo useful
+| Scenario | Service result |
+| --- | --- |
+| A new event has a valid ID, signature, and JSON body | Store it atomically and return `201` |
+| The same ID and exact body are delivered again | Return `200` with `"duplicate": true`; keep one database row |
+| The same ID is reused with different content | Return `409`; keep the original event unchanged |
+| The signature is missing or invalid | Return `401`; persist nothing |
+| The request body is larger than 1 MiB | Return `413`; persist nothing |
+| A caller requests a stored or unknown event | Return the parsed event with `200`, or `404` |
+| A caller checks service and database health | Return `200` when healthy, or `503` when the database is unavailable |
 
-The first final-acceptance round did not pass.
+The result is a runnable FastAPI and SQLite service with transaction-safe deduplication under sequential and
+concurrent delivery. It runs as UID 1001 in Docker, persists its database under `/data`, and exposes a container
+healthcheck.
 
-The production service and checked-in harness used `compose:app`, but the
-reviewed acceptance document still started the intentionally minimal
-`src.api:app` stub. The acceptor did not reuse the worker's successful test
-claim. It ran the document literally and recorded 2 passing flows and 9 failed
-flows.
+## Delivery evidence
 
-The acceptance source was corrected in commit
-[`56daf00`](https://github.com/xiaohei-info/oh-my-multica-demo-webhook-inbox/commit/56daf007c2cd6fc1b25c03e22ad4e957d18ea2a3).
-The full acceptance document was then rerun from the beginning. All 11 flows
-passed, and the controller returned exit 0.
+| Evidence | Result |
+| --- | --- |
+| Delivery DAG | 5/5 nodes converged to `done` |
+| Pull requests | 5 reviewed PRs merged |
+| Test suite | 86 tests passed |
+| Coverage | 97.18%, above the 90% gate |
+| CI | Python 3.10, 3.11, 3.12, and 3.13 passed |
+| Container delivery | Non-root image, healthcheck, signed-webhook smoke test passed |
+| Final acceptance | 11/11 flows passed on the integrated `main` branch |
+| Controller result | exit 0 |
 
-That failure is the point of the demo. Code generation had already finished.
-The delivery loop still found that the evidence source and the production entry
-point disagreed, refused to call the project complete, preserved the failed
-round, and reran acceptance after the source was repaired.
+The delivery facts are checked in as the [manifest DAG](.omac/webhook-inbox.yaml),
+[acceptance document](.omac/webhook-inbox.acceptance.yaml), and [delivery goal](GOAL.md).
 
 ## Reproduce the evidence
 
@@ -215,9 +214,8 @@ review, and accept work. Deterministic software owns dependency scheduling,
 evidence gates, bounded rework, merge conditions, recovery, and the final stop
 decision.
 
-Read
-[Webhook Inbox: a real end-to-end delivery](https://github.com/xiaohei-info/oh-my-multica/blob/main/docs/case-studies/webhook-inbox-end-to-end.md)
-for the delivery timeline, failure evidence, and model-role split.
+Read the [oh-my-multica README](https://github.com/xiaohei-info/oh-my-multica#readme) for the delivery model behind
+this project.
 
 ## License
 
